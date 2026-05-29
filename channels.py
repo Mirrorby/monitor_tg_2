@@ -6,7 +6,8 @@ import asyncio
 from telethon import TelegramClient
 from telethon.errors import ChannelPrivateError, FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 
-from config import state, _executor, _state_lock, log
+from config import state, _executor, log
+import config
 from sheets import _safe_sheets, _write_entity_cache, _set_channel_status, _write_log
 from bot_api import _send_alert
 from utils import _all_id_variants, _extract_username
@@ -74,7 +75,7 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
 
     added   = new_ids - state['watched_ids']
     removed = state['watched_ids'] - new_ids
-    async with _state_lock:
+    async with config._state_lock:
         state['watched_ids'] = new_ids
         state['id_to_meta']  = new_id_meta
 
