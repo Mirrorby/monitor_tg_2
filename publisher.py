@@ -7,10 +7,11 @@ import time
 
 from telethon import TelegramClient
 
+import config
 from config import (
     state, _executor, metrics, pending_moderation,
     published_fingerprints, ai_rejected_fingerprints,
-    _state_lock, log,
+    log,
 )
 from sheets import (
     _safe_sheets, _safe_sheets_retry,
@@ -127,7 +128,7 @@ async def _do_publish(
       2. В бот всем подписчикам — всегда
     """
     user_id = post.get('user_id', 0)
-    async with _state_lock:
+    async with config._state_lock:
         realtors = set(state.get('realtors', set()))
     if user_id and user_id in realtors and ai_decision not in ('approve_agent', 'skip'):
         log.info(f'[{acc}][риэлтор из списка] user_id={user_id} → approve_agent')
@@ -200,7 +201,7 @@ async def _process_and_publish(
         log.warning(f'[{acc}] Не удалось получить bio: {e}')
 
     # 4. AI-модерация
-    async with _state_lock:
+    async with config._state_lock:
         realtors = set(state.get('realtors', set()))
     is_known_realtor = bool(user_id and user_id in realtors)
     ai_decision = await _ai_moderate(text, score, sender_bio, is_known_realtor)
@@ -218,7 +219,7 @@ async def _process_and_publish(
     # Если AI впервые определил агента — записываем в Риэлторы
     if ai_decision == 'approve_agent' and user_id and user_id not in realtors:
         await _safe_sheets_retry(_add_realtor_to_sheet, ss, post, user_id)
-        async with _state_lock:
+        async with config._state_lock:
             state['realtors'].add(user_id)
         log.info(f'[{acc}][новый риэлтор записан] user_id={user_id}')
 
@@ -240,7 +241,7 @@ async def _process_and_publish(
 
     # 8. MODERATION_NEEDED (Gemini недоступен)
     if ai_decision == 'MODERATION_NEEDED':
-        async with _state_lock:
+        async with config._state_lock:
             token     = state['tg_token']
             moderator = state['moderator_chat_id']
         if token and moderator:
