@@ -5,9 +5,10 @@
 import asyncio
 import time
 
+import config
 from config import (
     SETTINGS_RELOAD_SEC, state, _executor, metrics, pending_moderation,
-    published_fingerprints, _state_lock, log,
+    published_fingerprints, log,
 )
 from sheets import (
     _safe_sheets, _safe_sheets_retry, _safe_sheets_result,
@@ -44,7 +45,7 @@ async def _settings_reload_loop(clients: dict, ss):
             new_subscribers = await _safe_sheets_result(_read_bot_subscribers,  ss)
 
             if new_settings:
-                async with _state_lock:
+                async with config._state_lock:
                     state.update({
                         'tg_token':             new_settings['tg_token'],
                         'score_threshold':      new_settings['score_threshold'],
@@ -57,13 +58,13 @@ async def _settings_reload_loop(clients: dict, ss):
                                                     new_settings.get('excluded_accounts', '')),
                     })
             if new_rules       is not None:
-                async with _state_lock: state['scoring_rules']   = new_rules
+                async with config._state_lock: state['scoring_rules']   = new_rules
             if new_minus       is not None:
-                async with _state_lock: state['minus_words']     = new_minus
+                async with config._state_lock: state['minus_words']     = new_minus
             if new_realtors    is not None:
-                async with _state_lock: state['realtors']        = new_realtors
+                async with config._state_lock: state['realtors']        = new_realtors
             if new_subscribers is not None:
-                async with _state_lock: state['bot_subscribers'] = new_subscribers
+                async with config._state_lock: state['bot_subscribers'] = new_subscribers
             if new_channels    is not None:
                 await _update_watched_chats(clients, new_channels, ss)
 
@@ -149,7 +150,7 @@ async def _bot_polling_loop(clients: dict, ss):
                 break
 
     while True:
-        async with _state_lock:
+        async with config._state_lock:
             token     = state['tg_token']
             moderator = state['moderator_chat_id']
 
@@ -212,7 +213,7 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
     from sheets import _safe_sheets_result, _safe_sheets_retry
     from sheets import _add_bot_subscriber
 
-    async with _state_lock:
+    async with config._state_lock:
         already = chat_id in state['bot_subscribers']
 
     if already:
@@ -223,10 +224,10 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
             }
         )
     else:
-        async with _state_lock:
+        async with config._state_lock:
             added = await _safe_sheets_result(_add_bot_subscriber, ss, chat_id, username)
         if added:
-            async with _state_lock:
+            async with config._state_lock:
                 state['bot_subscribers'].add(chat_id)
             log.info(f'[бот] Новый подписчик: chat_id={chat_id} @{username}')
 
@@ -264,13 +265,13 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
 async def _handle_stop(loop, token: str, chat_id: int, ss):
     from sheets import _safe_sheets_result, _remove_bot_subscriber
 
-    async with _state_lock:
+    async with config._state_lock:
         was_subscribed = chat_id in state['bot_subscribers']
 
     if was_subscribed:
         removed = await _safe_sheets_result(_remove_bot_subscriber, ss, chat_id)
         if removed:
-            async with _state_lock:
+            async with config._state_lock:
                 state['bot_subscribers'].discard(chat_id)
             log.info(f'[бот] Отписался: chat_id={chat_id}')
         await loop.run_in_executor(
@@ -323,7 +324,7 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
 
     if action in ('approve_private', 'approve_agent'):
         client = next(iter(clients.values()), None)
-        async with _state_lock:
+        async with config._state_lock:
             dest_private = state['dest_chat_id']
             dest_agent   = state.get('dest_chat_id_agent', '')
         target = dest_agent if (action == 'approve_agent' and dest_agent) else dest_private
@@ -357,11 +358,11 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
 
                 if action == 'approve_agent':
                     user_id = post.get('user_id', 0)
-                    async with _state_lock:
+                    async with config._state_lock:
                         known_realtors = set(state.get('realtors', set()))
                     if user_id and user_id not in known_realtors:
                         await _safe_sheets_retry(_add_realtor_to_sheet, ss, post, user_id)
-                        async with _state_lock:
+                        async with config._state_lock:
                             state['realtors'].add(user_id)
                         log.info(f'[модерация] новый риэлтор записан user_id={user_id}')
 
