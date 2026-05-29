@@ -15,7 +15,7 @@ from sheets import (
     _read_settings, _read_scoring_rules, _read_minus_words,
     _read_realtors_raw, _read_channels, _read_bot_subscribers,
     _write_post, _update_rejected_status, _add_realtor_to_sheet,
-    _parse_excluded_accounts,
+    _parse_excluded_accounts, _expire_crm_subscriptions,
 )
 from sheets import _resolve_realtors
 from channels import _update_watched_chats
@@ -35,6 +35,7 @@ async def _settings_reload_loop(clients: dict, ss):
     while True:
         await asyncio.sleep(SETTINGS_RELOAD_SEC)
         try:
+            loop = asyncio.get_event_loop()
             log.info('Перезагрузка настроек...')
             new_settings    = await _safe_sheets_result(_read_settings,         ss)
             new_rules       = await _safe_sheets_result(_read_scoring_rules,    ss)
@@ -67,6 +68,26 @@ async def _settings_reload_loop(clients: dict, ss):
                 async with config._state_lock: state['bot_subscribers'] = new_subscribers
             if new_channels    is not None:
                 await _update_watched_chats(clients, new_channels, ss)
+                
+            # Проверка истёкших подписок
+            expired_ids = await _safe_sheets_result(_expire_crm_subscriptions, ss)
+            if expired_ids:
+                async with config._state_lock:
+                    for cid in expired_ids:
+                        state['bot_subscribers'].discard(cid)
+                token = state['tg_token']
+                if token:
+                    for cid in expired_ids:
+                        await loop.run_in_executor(
+                            _executor, _tg_request, token, 'sendMessage', {
+                                'chat_id': cid,
+                                'text': (
+                                    '⏳ Ваш доступ к рассылке объявлений истёк.\n\n'
+                                    'Чтобы продолжить получать объявления по аренде '
+                                    'недвижимости в Батуми — напишите @Mirrorby_ru.'
+                                ),
+                            }
+                        )
 
             log.info(
                 f'Настройки применены | каналов: {len(state["watched_ids"])} | '
@@ -224,8 +245,8 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
             }
         )
     else:
-        async with config._state_lock:
-            added = await _safe_sheets_result(_add_bot_subscriber, ss, chat_id, username)
+        added = await _safe_sheets_result(_add_bot_subscriber, ss, chat_id, username)
+        trial_end = added.get('trial_end', '') if isinstance(added, dict) else ''
         if added:
             async with config._state_lock:
                 state['bot_subscribers'].add(chat_id)
@@ -250,11 +271,12 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
             _executor, _tg_request, token, 'sendMessage', {
                 'chat_id': chat_id,
                 'text': (
-                    '🏠 Добро пожаловать!\n\n'
-                    'Вы подписаны на рассылку объявлений об аренде '
-                    'недвижимости в Батуми.\n\n'
-                    'Новые объявления будут приходить сюда автоматически.\n\n'
-                    'Чтобы отписаться — отправьте /stop'
+                    f'🏠 Добро пожаловать!\n\n'
+                    f'Вам активирован бесплатный триал на 3 дня — '
+                    f'до {trial_end} включительно.\n\n'
+                    f'Новые объявления об аренде недвижимости в Батуми '
+                    f'будут приходить сюда автоматически.\n\n'
+                    f'Чтобы отписаться — отправьте /stop'
                 ),
             }
         )
