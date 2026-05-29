@@ -254,18 +254,31 @@ def _read_channels(ss):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _read_bot_subscribers(ss) -> set:
-    """Читает CRM, возвращает set[int] chat_id тех у кого колонка I = 'Да'."""
     try:
         ws   = ss.worksheet('CRM')
         rows = ws.get_all_values()
         result = set()
+        today = _local_now().date()
         for row in rows[5:]:
             if not row:
                 continue
-            chat_id_raw = row[0].strip()   # A — Chat ID
-            subscribed  = row[8].strip()   # I — Подписался на бот
-            if subscribed == 'Да' and chat_id_raw.lstrip('-').isdigit():
-                result.add(int(chat_id_raw))
+            chat_id_raw = row[0].strip()
+            subscribed  = row[8].strip()   # I
+            status      = row[9].strip()   # J
+            end_date    = row[12].strip()  # M
+            if subscribed != 'Да':
+                continue
+            if not chat_id_raw.lstrip('-').isdigit():
+                continue
+            if status not in ('✅ Активен', '🔵 Триал'):
+                continue
+            try:
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+                if end_dt < today:
+                    continue
+            except ValueError:
+                continue
+            result.add(int(chat_id_raw))
         log.info(f'Активных подписчиков загружено из CRM: {len(result)}')
         return result
     except Exception as e:
@@ -362,6 +375,47 @@ def _remove_bot_subscriber(ss, chat_id: int):
         log.error(f'Ошибка удаления подписчика из CRM: {e}', exc_info=True)
         return False
 
+def _expire_crm_subscriptions(ss) -> list[int]:
+    """
+    Проверяет CRM: у кого дата окончания < сегодня и статус Активен/Триал —
+    ставит статус 'Не продлил', колонку I = 'Нет'.
+    Возвращает список chat_id которых нужно уведомить и отключить.
+    """
+    try:
+        ws   = ss.worksheet('CRM')
+        rows = ws.get_all_values()
+        today = _local_now().date()
+        expired = []
+
+        for i, row in enumerate(rows[5:], start=6):
+            if not row or not row[0].strip():
+                continue
+            chat_id_raw = row[0].strip()
+            status      = row[9].strip()   # J
+            end_date    = row[12].strip()  # M
+
+            if status not in ('✅ Активен', '🔵 Триал'):
+                continue
+            if not chat_id_raw.lstrip('-').isdigit():
+                continue
+            try:
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+            except ValueError:
+                continue
+
+            if end_dt < today:
+                cells = [
+                    gspread.Cell(i, 9,  'Нет'),
+                    gspread.Cell(i, 10, '🔴 Не продлил'),
+                ]
+                ws.update_cells(cells, value_input_option='USER_ENTERED')
+                expired.append(int(chat_id_raw))
+                log.info(f'[CRM] chat_id={chat_id_raw} — истёк {end_date}, статус → Не продлил')
+
+        return expired
+    except Exception as e:
+        log.error(f'Ошибка проверки истёкших подписок: {e}', exc_info=True)
+        return []
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Запись
