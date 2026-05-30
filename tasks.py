@@ -74,7 +74,7 @@ async def _settings_reload_loop(clients: dict, ss):
             if expired_ids:
                 async with config._state_lock:
                     for cid in expired_ids:
-                        state['bot_subscribers'].discard(cid)
+                        state['bot_subscribers'].pop(cid, None)
                 token = state['tg_token']
                 if token:
                     for cid in expired_ids:
@@ -230,6 +230,8 @@ async def _bot_polling_loop(clients: dict, ss):
 
 # ── /start ─────────────────────────────────────────────────────────────────────
 
+# СТАЛО — полная замена функции _handle_start:
+
 async def _handle_start(loop, token: str, moderator: str, chat_id: int, username: str, ss):
     from sheets import _safe_sheets_result, _safe_sheets_retry
     from sheets import _add_bot_subscriber
@@ -238,49 +240,77 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
         already = chat_id in state['bot_subscribers']
 
     if already:
-        await loop.run_in_executor(
-            _executor, _tg_request, token, 'sendMessage', {
-                'chat_id': chat_id,
-                'text':    '✅ Вы уже подписаны на рассылку объявлений.',
-            }
-        )
-    else:
-        added = await _safe_sheets_result(_add_bot_subscriber, ss, chat_id, username)
-        trial_end = added.get('trial_end', '') if isinstance(added, dict) else ''
-        if added:
-            async with config._state_lock:
-                state['bot_subscribers'].add(chat_id)
-            log.info(f'[бот] Новый подписчик: chat_id={chat_id} @{username}')
+        sub_info = state['bot_subscribers'].get(chat_id, {})
+        city = sub_info.get('city', '')
+        if city:
+            await loop.run_in_executor(
+                _executor, _tg_request, token, 'sendMessage', {
+                    'chat_id': chat_id,
+                    'text':    f'✅ Вы уже подписаны. Выбранный город: <b>{city}</b>',
+                    'parse_mode': 'HTML',
+                }
+            )
+        else:
+            # Подписан, но город не выбран — показываем кнопки снова
+            await _send_city_selection(loop, token, chat_id)
+        return
 
-            if isinstance(added, dict) and added.get('is_new') and token and moderator:
-                notify_text = (
-                    f'🆕 <b>Новый подписчик без записи в CRM</b>\n\n'
-                    f'👤 Username: @{username}\n'
-                    f'🆔 Chat ID: <code>{chat_id}</code>\n'
-                    f'📅 Триал до: {added["trial_end"]}\n\n'
-                    f'Запись создана автоматически.'
-                )
-                await loop.run_in_executor(
-                    _executor, _tg_request, token, 'sendMessage', {
-                        'chat_id':    moderator,
-                        'text':       notify_text,
-                        'parse_mode': 'HTML',
-                    }
-                )
+    # Регистрируем подписчика (без города — он выберет через кнопку)
+    added = await _safe_sheets_result(_add_bot_subscriber, ss, chat_id, username)
+    if not added:
+        return
+
+    trial_end = added.get('trial_end', '') if isinstance(added, dict) else ''
+
+    # Уведомляем модератора о новом подписчике
+    if isinstance(added, dict) and added.get('is_new') and token and moderator:
+        notify_text = (
+            f'🆕 <b>Новый подписчик без записи в CRM</b>\n\n'
+            f'👤 Username: @{username}\n'
+            f'🆔 Chat ID: <code>{chat_id}</code>\n'
+            f'📅 Триал до: {trial_end}\n\n'
+            f'Запись создана автоматически.'
+        )
         await loop.run_in_executor(
             _executor, _tg_request, token, 'sendMessage', {
-                'chat_id': chat_id,
-                'text': (
-                    f'🏠 Добро пожаловать!\n\n'
-                    f'Вам активирован бесплатный триал на 3 дня — '
-                    f'до {trial_end} включительно.\n\n'
-                    f'Новые объявления об аренде недвижимости в Батуми '
-                    f'будут приходить сюда автоматически.\n\n'
-                    f'Чтобы отписаться — отправьте /stop'
-                ),
+                'chat_id':    moderator,
+                'text':       notify_text,
+                'parse_mode': 'HTML',
             }
         )
 
+    # Временно добавляем в state без города
+    async with config._state_lock:
+        state['bot_subscribers'][chat_id] = {'city': '', 'theme': ''}
+
+    # Отправляем приветствие + выбор города
+    await loop.run_in_executor(
+        _executor, _tg_request, token, 'sendMessage', {
+            'chat_id': chat_id,
+            'text': (
+                f'🏠 Добро пожаловать!\n\n'
+                f'Вам активирован бесплатный триал на 3 дня — '
+                f'до {trial_end} включительно.\n\n'
+                f'Выберите город, по которому хотите получать объявления об аренде:'
+            ),
+        }
+    )
+    await _send_city_selection(loop, token, chat_id)
+
+async def _send_city_selection(loop, token: str, chat_id: int):
+    """Отправляет сообщение с inline-кнопками выбора города."""
+    await loop.run_in_executor(
+        _executor, _tg_request, token, 'sendMessage', {
+            'chat_id': chat_id,
+            'text': '🏙 Выберите город:',
+            'reply_markup': {
+                'inline_keyboard': [[
+                    {'text': '📍 Батуми',   'callback_data': 'city:Батуми'},
+                    {'text': '📍 Тбилиси',  'callback_data': 'city:Тбилиси'},
+                ]]
+            },
+        }
+    )
 
 # ── /stop ──────────────────────────────────────────────────────────────────────
 
@@ -294,7 +324,7 @@ async def _handle_stop(loop, token: str, chat_id: int, ss):
         removed = await _safe_sheets_result(_remove_bot_subscriber, ss, chat_id)
         if removed:
             async with config._state_lock:
-                state['bot_subscribers'].discard(chat_id)
+                state['bot_subscribers'].pop(chat_id, None)
             log.info(f'[бот] Отписался: chat_id={chat_id}')
         await loop.run_in_executor(
             _executor, _tg_request, token, 'sendMessage', {
@@ -321,6 +351,10 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
     data    = cq.get('data', '')
     from_id = cq.get('from', {}).get('id', '')
     msg_id  = cq.get('message', {}).get('message_id', 0)
+    if data.startswith('city:'):
+        city = data.split(':', 1)[1].strip()
+        await _handle_city_choice(loop, cq, token, city, ss)
+        return
 
     parts = data.split(':', 2)
     if len(parts) != 3 or parts[0] not in ('approve_private', 'approve_agent', 'skip'):
@@ -443,3 +477,50 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
         )
 
     pending_moderation.pop(pend_key, None)
+
+async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
+    from sheets import _safe_sheets_retry, _set_subscriber_city
+
+    cq_id   = cq['id']
+    chat_id = cq.get('from', {}).get('id')
+    msg_id  = cq.get('message', {}).get('message_id', 0)
+
+    # Записываем в CRM
+    await _safe_sheets_retry(_set_subscriber_city, ss, chat_id, city)
+
+    # Обновляем state
+    async with config._state_lock:
+        if chat_id in state['bot_subscribers']:
+            state['bot_subscribers'][chat_id]['city'] = city
+        else:
+            state['bot_subscribers'][chat_id] = {'city': city, 'theme': ''}
+
+    log.info(f'[бот] chat_id={chat_id} выбрал город: {city}')
+
+    # Убираем кнопки с сообщения
+    await loop.run_in_executor(
+        _executor, _tg_request, token, 'editMessageReplyMarkup', {
+            'chat_id':      chat_id,
+            'message_id':   msg_id,
+            'reply_markup': {'inline_keyboard': []},
+        }
+    )
+
+    # Подтверждение
+    await loop.run_in_executor(
+        _executor, _tg_request, token, 'sendMessage', {
+            'chat_id': chat_id,
+            'text': (
+                f'✅ Настройки сохранены — выбран город <b>{city}</b>.\n\n'
+                f'Новые объявления об аренде недвижимости в {city} '
+                f'будут приходить сюда автоматически.\n\n'
+                f'Для подключения второго города напишите в бот @lead_vitrina_help_bot.\n\n'
+                f'Чтобы отписаться — отправьте /stop'
+            ),
+            'parse_mode': 'HTML',
+        }
+    )
+
+    await loop.run_in_executor(
+        _executor, _answer_callback, token, cq_id, f'✅ Город {city} выбран'
+    )
