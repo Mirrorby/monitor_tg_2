@@ -59,6 +59,8 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
         username = ch['username']
         cached   = state['username_to_meta'].get(username)
         if cached and 'entity_id' in cached:
+            cached['city']  = ch.get('city', '')
+            cached['theme'] = ch.get('theme', '')
             eid = cached['entity_id']
             for vid in _all_id_variants(eid):
                 new_ids.add(vid)
@@ -66,6 +68,8 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
             continue
         meta = await _resolve_entity(clients, username, ss)
         if meta:
+            meta['city']  = ch.get('city', '')
+            meta['theme'] = ch.get('theme', '')
             eid = meta['entity_id']
             for vid in _all_id_variants(eid):
                 new_ids.add(vid)
@@ -75,9 +79,17 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
 
     added   = new_ids - state['watched_ids']
     removed = state['watched_ids'] - new_ids
+    new_city_map = {}
+    for ch in channels:
+        uname = ch.get('username', '')
+        city  = ch.get('city', '')
+        if uname and city:
+            new_city_map[uname] = city
+            
     async with config._state_lock:
         state['watched_ids'] = new_ids
         state['id_to_meta']  = new_id_meta
+        state['channel_city_map'] = new_city_map
 
     log.info(f'Каналов в watched_ids: {len(new_ids)}')
     if added:   log.info(f'Добавлено ID-ключей: {len(added)}')
