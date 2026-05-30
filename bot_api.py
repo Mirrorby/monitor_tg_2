@@ -331,10 +331,12 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
 
     async with _state_lock:
         token       = state['tg_token']
-        subscribers = set(state['bot_subscribers'])
+        subscribers = dict(state['bot_subscribers'])
 
     if not token or not subscribers:
         return
+
+    post_city = post.get('channel_city', '').strip().lower()
 
     text     = _build_bot_text(post)
     keyboard = _build_bot_keyboard(post)
@@ -345,7 +347,14 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
 
     loop = asyncio.get_event_loop()
 
-    for chat_id in subscribers:
+    for chat_id, sub_info in subscribers.items():
+        sub_city = sub_info.get('city', '').strip().lower()
+        # Если у поста есть город — отправляем только совпадающим подписчикам
+        if post_city and sub_city and sub_city != post_city:
+            continue
+        # Если у поста нет города — пропускаем (не должно быть, но на всякий случай)
+        if post_city and not sub_city:
+            continue
         try:
             if photos and len(photos) == 1:
                 status = await loop.run_in_executor(
@@ -397,7 +406,7 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
     if blocked_ids:
         async with _state_lock:
             for cid in blocked_ids:
-                state['bot_subscribers'].discard(cid)
+                state['bot_subscribers'].pop(cid, None)
         for cid in blocked_ids:
             await _safe_sheets_retry(_remove_bot_subscriber, ss, cid)
 
