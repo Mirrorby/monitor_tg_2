@@ -237,12 +237,12 @@ def _read_channels(ss):
         for row in data[1:]:
             if not row or not row[0].strip():
                 continue
-            status = str(row[2]).strip() if len(row) > 2 else 'активен'
-            if status == 'пауза':
-                continue
             username = _extract_username(row[0].strip())
-            if username:
-                result.append({'username': username})
+            if not username:
+                continue
+            city  = str(row[1]).strip() if len(row) > 1 else ''
+            theme = str(row[2]).strip() if len(row) > 2 else ''
+            result.append({'username': username, 'city': city, 'theme': theme})
         return result
     except Exception as e:
         log.error('Ошибка чтения каналов: ' + str(e), exc_info=True)
@@ -253,11 +253,15 @@ def _read_channels(ss):
 # Подписчики бота (CRM)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _read_bot_subscribers(ss) -> set:
+def _read_bot_subscribers(ss) -> dict:
+    """
+    Возвращает dict: {chat_id: {'city': str, 'theme': str}}
+    Только активные/триал с не истёкшей датой И с выбранным городом.
+    """
     try:
         ws   = ss.worksheet('CRM')
         rows = ws.get_all_values()
-        result = set()
+        result = {}
         today = _local_now().date()
         for row in rows[5:]:
             if not row:
@@ -266,6 +270,8 @@ def _read_bot_subscribers(ss) -> set:
             subscribed  = row[8].strip()   # I
             status      = row[9].strip()   # J
             end_date    = row[12].strip()  # M
+            city        = row[15].strip() if len(row) > 15 else ''   # P
+            theme       = row[16].strip() if len(row) > 16 else ''   # Q
             if subscribed != 'Да':
                 continue
             if not chat_id_raw.lstrip('-').isdigit():
@@ -278,12 +284,14 @@ def _read_bot_subscribers(ss) -> set:
                     continue
             except ValueError:
                 continue
-            result.add(int(chat_id_raw))
+            if not city:
+                continue  # без города — не получает ничего
+            result[int(chat_id_raw)] = {'city': city, 'theme': theme}
         log.info(f'Активных подписчиков загружено из CRM: {len(result)}')
         return result
     except Exception as e:
         log.error(f'Ошибка чтения подписчиков из CRM: {e}', exc_info=True)
-        return set()
+        return {}
 
 
 def _add_bot_subscriber(ss, chat_id: int, username: str = ''):
@@ -339,7 +347,6 @@ def _add_bot_subscriber(ss, chat_id: int, username: str = ''):
                 gspread.Cell(next_row, 11, today_dt),
                 gspread.Cell(next_row, 12, '3'),
                 gspread.Cell(next_row, 13, trial_end),
-                gspread.Cell(next_row, 16, 'Батуми / аренда'),
             ]
             ws.update_cells(cells, value_input_option='USER_ENTERED')
             log.info(f'[подписчик] НОВЫЙ {username} (chat_id={chat_id}) — пришёл напрямую, триал до {trial_end}')
@@ -375,6 +382,24 @@ def _remove_bot_subscriber(ss, chat_id: int):
         log.error(f'Ошибка удаления подписчика из CRM: {e}', exc_info=True)
         return False
 
+def _set_subscriber_city(ss, chat_id: int, city: str) -> bool:
+    """Записывает выбранный город в CRM колонку P (индекс 16)."""
+    try:
+        ws   = ss.worksheet('CRM')
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows[5:], start=6):
+            if not row:
+                continue
+            if row[0].strip() == str(chat_id):
+                ws.update(values=[[city]], range_name=f'P{i}')
+                log.info(f'[CRM] chat_id={chat_id} → город: {city}')
+                return True
+        log.warning(f'[CRM] chat_id={chat_id} не найден для записи города')
+        return False
+    except Exception as e:
+        log.error(f'Ошибка записи города в CRM: {e}', exc_info=True)
+        return False
+        
 def _expire_crm_subscriptions(ss) -> list[int]:
     """
     Проверяет CRM: у кого дата окончания < сегодня и статус Активен/Триал —
