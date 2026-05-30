@@ -595,22 +595,6 @@ def _write_entity_cache(ss):
     except Exception as e:
         log.error(f'Ошибка записи кеша: {e}', exc_info=True)
 
-
-def _set_channel_status(ss, username: str, status: str):
-    try:
-        ws   = ss.worksheet('Каналы')
-        data = ws.get_all_values()
-        for i, row in enumerate(data[1:], start=2):
-            if not row:
-                continue
-            u = _extract_username(row[0].strip())
-            if u and u.lower() == username.lower():
-                ws.update(values=[[status]], range_name=f'C{i}')
-                return
-    except Exception as e:
-        log.error(f'Ошибка обновления статуса канала {username}: {e}', exc_info=True)
-
-
 def _update_rejected_status(ss, bot_message_id: int, new_status: str):
     try:
         ws   = ss.worksheet('Отклонённые')
