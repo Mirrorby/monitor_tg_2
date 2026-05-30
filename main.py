@@ -248,6 +248,8 @@ async def main():
                 'src_msg_id':   first.id,
                 'grouped_refs': [(getattr(m, 'chat_id', None) or raw_id, m.id) for m in msgs],
                 'added_at':     time.time(),
+                'channel_city':  meta.get('city', ''),
+                'channel_theme': meta.get('theme', ''),
             }
 
             metrics['processed'] += 1
@@ -353,7 +355,8 @@ async def main():
                     'src_chat_id':  raw_id,
                     'src_msg_id':   msg.id,
                     'grouped_refs': [(msg.chat_id, msg.id)],
-                    'added_at':     time.time(),
+                    'channel_city':  meta.get('city', ''),
+                    'channel_theme': meta.get('theme', ''),
                 }
 
                 metrics['processed'] += 1
