@@ -55,7 +55,8 @@ state = {
     'excluded_accounts':    set(),
     'realtors':             set(),
     # Подписчики бота: set[int] — chat_id пользователей
-    'bot_subscribers':      set(),
+    'bot_subscribers':      {},
+    'channel_city_map':     {},       # dict[str, str] — {username: city}
 }
 
 # ── Очереди дедупликации ───────────────────────────────────────────────────────
