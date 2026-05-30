@@ -8,7 +8,7 @@ from telethon.errors import ChannelPrivateError, FloodWaitError, UsernameInvalid
 
 from config import state, _executor, log
 import config
-from sheets import _safe_sheets, _write_entity_cache, _set_channel_status, _write_log
+from sheets import _safe_sheets, _write_entity_cache, _write_log
 from bot_api import _send_alert
 from utils import _all_id_variants, _extract_username
 
@@ -46,7 +46,6 @@ async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(_executor, _send_alert,
                                state['tg_token'], state['moderator_chat_id'], msg)
-    await _safe_sheets(_set_channel_status, ss, username, 'недоступен')
     await _safe_sheets(_write_log, ss, 'ERROR', msg)
     return None
 
