@@ -229,10 +229,11 @@ def _build_bot_keyboard(post: dict) -> dict:
 
 def _send_text_to_subscriber(token: str, chat_id: int, text: str, keyboard: dict) -> str:
     """Возвращает: 'ok' | 'blocked' | 'error: <описание>'"""
+    import re
+    text = re.sub(r'<[^>]+>', '', text)
     payload: dict = {
         'chat_id':                  chat_id,
         'text':                     text,
-        'parse_mode':               'HTML',
         'disable_web_page_preview': True,
     }
     if keyboard:
