@@ -348,12 +348,10 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
     loop = asyncio.get_event_loop()
 
     for chat_id, sub_info in subscribers.items():
-        sub_city = sub_info.get('city', '').strip().lower()
-        # Если у поста есть город — отправляем только совпадающим подписчикам
-        if post_city and sub_city and sub_city != post_city:
+        sub_cities = [c.strip().lower() for c in sub_info.get('city', '').split(',') if c.strip()]
+        if post_city and sub_cities and post_city not in sub_cities:
             continue
-        # Если у поста нет города — пропускаем (не должно быть, но на всякий случай)
-        if post_city and not sub_city:
+        if post_city and not sub_cities:
             continue
         try:
             if photos and len(photos) == 1:
