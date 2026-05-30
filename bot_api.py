@@ -336,7 +336,7 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
     if not token or not subscribers:
         return
 
-    post_city = post.get('channel_city', '').strip().lower()
+    post_cities = [c.strip().lower() for c in post.get('channel_city', '').split(',') if c.strip()]
 
     text     = _build_bot_text(post)
     keyboard = _build_bot_keyboard(post)
@@ -349,9 +349,9 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
 
     for chat_id, sub_info in subscribers.items():
         sub_cities = [c.strip().lower() for c in sub_info.get('city', '').split(',') if c.strip()]
-        if post_city and sub_cities and post_city not in sub_cities:
+        if post_cities and sub_cities and not any(c in sub_cities for c in post_cities):
             continue
-        if post_city and not sub_cities:
+        if post_cities and not sub_cities:
             continue
         try:
             if photos and len(photos) == 1:
