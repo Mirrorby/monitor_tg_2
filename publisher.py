@@ -230,9 +230,7 @@ async def _process_and_publish(
         return
 
     # 6. Скачиваем фото
-    refs   = post.get('grouped_refs', [])
-    msgs   = await _fetch_messages_by_refs(client, refs) if refs else []
-    photos = await _download_photos(client, msgs) if msgs else []
+    photos = await _download_photos(client, msgs_for_photos) if msgs_for_photos else []
 
     # 7. approve_private / approve_agent
     if ai_decision in ('approve_private', 'approve_agent'):
