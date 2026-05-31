@@ -2,10 +2,10 @@
 Управление каналами: резолв entity, обновление watched_ids.
 """
 import asyncio
-
+import re
 from telethon import TelegramClient
 from telethon.errors import ChannelPrivateError, FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
-
+from telethon.tl.types import PeerChannel
 from config import state, _executor, log
 import config
 from sheets import _safe_sheets, _write_entity_cache, _write_log
@@ -15,9 +15,18 @@ from utils import _all_id_variants, _extract_username
 
 async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
     errors = {}
+
+    # Если передан числовой ID вида -1001761990621 или просто 1761990621 —
+    # используем PeerChannel, иначе Telethon не найдёт закрытую группу
+    m = re.match(r'^-?100(\d+)$', str(username))
+    if m:
+        peer = PeerChannel(int(m.group(1)))
+    else:
+        peer = username
+
     for acc_name, client in clients.items():
         try:
-            entity    = await client.get_entity(username)
+            entity    = await client.get_entity(peer)
             eid       = abs(entity.id)
             chat_name = getattr(entity, 'title', None) or username
             log.info(f'Резолв [{acc_name}]: {username} → {eid} ({chat_name})')
@@ -26,7 +35,7 @@ async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
             log.warning(f'[{acc_name}] FloodWait при резолве {username}: жду {e.seconds}s')
             await asyncio.sleep(e.seconds + 2)
             try:
-                entity    = await client.get_entity(username)
+                entity    = await client.get_entity(peer)
                 eid       = abs(entity.id)
                 chat_name = getattr(entity, 'title', None) or username
                 return {'entity_id': eid, 'chat_name': chat_name, 'username': username}
@@ -65,6 +74,7 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
                 new_ids.add(vid)
                 new_id_meta[vid] = cached
             continue
+
         meta = await _resolve_entity(clients, username, ss)
         if meta:
             meta['city']  = ch.get('city', '')
@@ -76,21 +86,28 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
             state['username_to_meta'][username] = meta
         await asyncio.sleep(0.8)
 
-    added   = new_ids - state['watched_ids']
-    removed = state['watched_ids'] - new_ids
     new_city_map = {}
     for ch in channels:
         uname = ch.get('username', '')
         city  = ch.get('city', '')
         if uname and city:
             new_city_map[uname] = city
-            
+
     async with config._state_lock:
-        state['watched_ids'] = new_ids
-        state['id_to_meta']  = new_id_meta
+        # Мёржим со старыми данными — новые перезаписывают старые,
+        # но каналы у которых резолв упал остаются с прошлого раза
+        merged_ids  = state['watched_ids'] | new_ids
+        merged_meta = {**state['id_to_meta'], **new_id_meta}
+
+        added   = new_ids - state['watched_ids']
+        removed = state['watched_ids'] - new_ids  # информационно, реально не удаляем
+
+        state['watched_ids']      = merged_ids
+        state['id_to_meta']       = merged_meta
         state['channel_city_map'] = new_city_map
 
-    log.info(f'Каналов в watched_ids: {len(new_ids)}')
+    log.info(f'Каналов в watched_ids: {len(merged_ids)}')
     if added:   log.info(f'Добавлено ID-ключей: {len(added)}')
-    if removed: log.info(f'Убрано ID-ключей: {len(removed)}')
+    if removed: log.info(f'Убрано ID-ключей (в Sheets, но резолв не прошёл или удалены): {len(removed)}')
+
     await _safe_sheets(_write_entity_cache, ss)
