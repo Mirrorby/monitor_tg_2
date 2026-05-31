@@ -208,18 +208,16 @@ def _build_bot_text(post: dict) -> str:
 
 def _build_bot_keyboard(post: dict) -> dict:
     buttons = []
-
     source_link = post.get('link', '').strip()
-    if source_link:
+    if source_link and source_link.startswith(('http://', 'https://', 'tg://')):
         buttons.append({'text': '📢 Источник', 'url': source_link})
 
     author_link = post.get('author_link', '').strip()
-    if author_link:
+    if author_link and author_link.startswith(('http://', 'https://', 'tg://')):
         buttons.append({'text': '👤 Автор', 'url': author_link})
 
     if not buttons:
         return {}
-
     return {'inline_keyboard': [buttons]}
 
 
