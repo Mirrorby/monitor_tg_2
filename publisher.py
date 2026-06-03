@@ -189,14 +189,18 @@ async def _process_and_publish(
         log.info(f'[{acc}][дубль AI-rejected ⛔] {chat_name}')
         return
 
-    # 3. Bio автора
+    # 3. Bio автора — с жёстким таймаутом чтобы не тормозить обработку
     sender_bio = ''
     try:
         source_msg = msgs_for_photos[0] if msgs_for_photos else None
         if source_msg:
-            sender_bio = await _get_sender_bio(client, source_msg)
+            sender_bio = await asyncio.wait_for(
+                _get_sender_bio(client, source_msg), timeout=3.0
+            )
             if sender_bio:
                 log.info(f'[{acc}][bio] {sender_bio[:80]}')
+    except asyncio.TimeoutError:
+        log.debug(f'[{acc}][bio] timeout — пропуск')
     except Exception as e:
         log.warning(f'[{acc}] Не удалось получить bio: {e}')
 
