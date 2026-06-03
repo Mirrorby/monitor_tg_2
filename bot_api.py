@@ -27,15 +27,15 @@ def _tg_request(token: str, method: str, payload: dict, timeout: int = 10) -> di
                           f'(error_code={result.get("error_code")})')
             return result
     except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode('utf-8'))
+        except Exception:
+            body = {}
+        description = body.get('description', str(e))
         if e.code in (409, 401, 403):
-            try:
-                body = json.loads(e.read().decode('utf-8'))
-            except Exception:
-                body = {}
-            return {'ok': False, 'error_code': e.code,
-                    'description': body.get('description', str(e))}
-        log.error(f'TG API {method} HTTP {e.code}: {e}', exc_info=True)
-        return {}
+            return {'ok': False, 'error_code': e.code, 'description': description}
+        log.error(f'TG API {method} HTTP {e.code}: {description}', exc_info=True)
+        return {'ok': False, 'error_code': e.code, 'description': description}
     except Exception as e:
         log.error(f'TG API {method} error: {e}', exc_info=True)
         return {}
