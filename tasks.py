@@ -126,18 +126,46 @@ async def _cleanup_pending_loop():
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _heartbeat_loop():
+    loop = asyncio.get_event_loop()
     while True:
         await asyncio.sleep(300)
-        log.info(
-            f'[heartbeat] processed:{metrics["processed"]} '
-            f'published:{metrics["published"]} '
-            f'moderated:{metrics["moderated"]} '
-            f'errors:{metrics["errors"]} '
-            f'bot_sent:{metrics["bot_sent"]} '
-            f'bot_blocked:{metrics["bot_blocked"]} '
-            f'subscribers:{len(state["bot_subscribers"])} '
-            f'pending_mod:{len(pending_moderation)}'
-        )
+        try:
+            qsize = config.post_queue.qsize() if config.post_queue else 0
+
+            log.info(
+                f'[heartbeat] processed:{metrics["processed"]} '
+                f'published:{metrics["published"]} '
+                f'moderated:{metrics["moderated"]} '
+                f'errors:{metrics["errors"]} '
+                f'bot_sent:{metrics["bot_sent"]} '
+                f'bot_blocked:{metrics["bot_blocked"]} '
+                f'subscribers:{len(state["bot_subscribers"])} '
+                f'pending_mod:{len(pending_moderation)} '
+                f'queue:{qsize}'
+            )
+
+            async with config._state_lock:
+                token     = state.get('tg_token', '')
+                moderator = state.get('moderator_chat_id', '')
+
+            if qsize >= config.QUEUE_ALERT_THRESHOLD and not config.queue_alert_sent:
+                config.queue_alert_sent = True
+                log.warning(f'[heartbeat] ⚠️ очередь постов: {qsize} — отправляю алерт модератору')
+                if token and moderator:
+                    await loop.run_in_executor(
+                        config._executor, config._tg_request_alert, token, moderator, qsize
+                    )
+
+            if qsize < config.QUEUE_ALERT_THRESHOLD // 2 and config.queue_alert_sent:
+                config.queue_alert_sent = False
+                log.info(f'[heartbeat] очередь нормализовалась: {qsize}')
+                if token and moderator:
+                    await loop.run_in_executor(
+                        config._executor, config._tg_request_alert_ok, token, moderator, qsize
+                    )
+
+        except Exception as e:
+            log.error(f'Ошибка heartbeat: {e}', exc_info=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
