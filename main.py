@@ -2,10 +2,10 @@
 TG Parser v5 — точка входа.
 Инициализирует клиентов, регистрирует хендлеры, запускает фоновые задачи.
 """
+
 import asyncio
 import re
 import time
-
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import MessageService, MessageEmpty
@@ -40,12 +40,14 @@ from tasks import (
 
 async def main():
     global _sheets_lock, _state_lock
+
     log.info('═══ TG Parser v5 стартует ═══')
-    await asyncio.sleep(45)
+
+    # Было 45 — уменьшено до 5: Railway успевает поднять сеть за 2-3 сек
+    await asyncio.sleep(5)
 
     config._sheets_lock = asyncio.Lock()
-    config._state_lock  = asyncio.Lock()
-
+    config._state_lock = asyncio.Lock()
     loop = asyncio.get_event_loop()
 
     # ── Google Sheets ──────────────────────────────────────────────────────
@@ -56,15 +58,15 @@ async def main():
         log.error('Google Sheets: ошибка подключения: ' + str(e), exc_info=True)
         return
 
-    settings    = await _safe_sheets_result(_read_settings,         ss)
-    rules       = await _safe_sheets_result(_read_scoring_rules,    ss)
-    minus       = await _safe_sheets_result(_read_minus_words,      ss)
+    settings    = await _safe_sheets_result(_read_settings, ss)
+    rules       = await _safe_sheets_result(_read_scoring_rules, ss)
+    minus       = await _safe_sheets_result(_read_minus_words, ss)
     resolved_r, to_resolve_r = await _safe_sheets_result(_read_realtors_raw, ss)
-    channels    = await _safe_sheets_result(_read_channels,         ss)
-    subscribers = await _safe_sheets_result(_read_bot_subscribers,  ss)
+    channels    = await _safe_sheets_result(_read_channels, ss)
+    subscribers = await _safe_sheets_result(_read_bot_subscribers, ss)
 
     # ── Fingerprints ───────────────────────────────────────────────────────
-    initial_fps  = await _safe_sheets_result(_load_published_fingerprints,   ss)
+    initial_fps = await _safe_sheets_result(_load_published_fingerprints, ss)
     rejected_fps = await _safe_sheets_result(_load_ai_rejected_fingerprints, ss)
     for fp in initial_fps:
         published_fingerprints.append(fp)
@@ -92,7 +94,6 @@ async def main():
         'excluded_accounts':    _parse_excluded_accounts(settings.get('excluded_accounts', '')),
         'bot_subscribers':      subscribers,
     })
-
     log.info(
         f'Настройки загружены | '
         f'порог публикации: {state["score_threshold"]} | '
@@ -171,21 +172,19 @@ async def main():
         if not entry:
             return
         try:
-            msgs  = sorted(entry['msgs'], key=lambda m: m.id)
+            msgs = sorted(entry['msgs'], key=lambda m: m.id)
             first = msgs[0]
-
             try:
                 raw_id = first.chat_id
             except Exception:
                 raw_id = -(getattr(first.peer_id, 'channel_id', 0))
-
             abs_id = abs(raw_id)
 
             async with config._state_lock:
-                id_to_meta    = dict(state['id_to_meta'])
-                minus_words   = list(state['minus_words'])
+                id_to_meta   = dict(state['id_to_meta'])
+                minus_words  = list(state['minus_words'])
                 scoring_rules = list(state['scoring_rules'])
-                min_length    = state['min_length']
+                min_length   = state['min_length']
                 mod_threshold = state['moderation_threshold']
 
             meta = _meta_by_abs_id(id_to_meta, abs_id)
@@ -203,6 +202,7 @@ async def main():
                     text = t
                     text_entities = m.entities
                     break
+
             html_text = _text_to_html(text, text_entities)
             chat_name = meta.get('chat_name', str(abs_id))
 
@@ -210,6 +210,7 @@ async def main():
             if minus_hit:
                 log.info(f'[{_acc}][альбом минус "{minus_hit}"] {chat_name}')
                 return
+
             if len(text) < min_length:
                 log.info(f'[{_acc}][альбом короткий {len(text)}<{min_length}] {chat_name}')
                 return
@@ -223,8 +224,8 @@ async def main():
                 chat = await _client.get_entity(raw_id)
             except Exception:
                 chat = None
-
             link = _build_link(chat, first.id) if chat else f'https://t.me/c/{abs_id}/{first.id}'
+
             author_name, author_link, user_id = _get_author_info(first)
 
             async with config._state_lock:
@@ -234,24 +235,23 @@ async def main():
                 return
 
             post = {
-                'date':         first.date.replace(tzinfo=None),
-                'chat_name':    chat_name,
-                'author_name':  author_name,
-                'author_link':  author_link,
-                'user_id':      user_id,
-                'link':         link,
-                'text':         text,
-                'html_text':    html_text,
-                'score':        score,
-                'account':      _acc,
-                'src_chat_id':  raw_id,
-                'src_msg_id':   first.id,
-                'grouped_refs': [(getattr(m, 'chat_id', None) or raw_id, m.id) for m in msgs],
-                'added_at':     time.time(),
+                'date':          first.date.replace(tzinfo=None),
+                'chat_name':     chat_name,
+                'author_name':   author_name,
+                'author_link':   author_link,
+                'user_id':       user_id,
+                'link':          link,
+                'text':          text,
+                'html_text':     html_text,
+                'score':         score,
+                'account':       _acc,
+                'src_chat_id':   raw_id,
+                'src_msg_id':    first.id,
+                'grouped_refs':  [(getattr(m, 'chat_id', None) or raw_id, m.id) for m in msgs],
+                'added_at':      time.time(),
                 'channel_city':  meta.get('city', ''),
                 'channel_theme': meta.get('theme', ''),
             }
-
             metrics['processed'] += 1
             await _process_and_publish(post, _client, msgs, ss, _acc)
 
@@ -265,7 +265,6 @@ async def main():
         async def _on_new_message(event, _acc=acc_label, _client=client):
             try:
                 msg = event.message
-
                 if isinstance(msg, (MessageService, MessageEmpty)):
                     return
                 if getattr(msg, 'action', None) is not None:
@@ -342,23 +341,22 @@ async def main():
                 log.info(f'[{_acc}][принят скор:{score}] {chat_name} → {link}')
 
                 post = {
-                    'date':         msg.date.replace(tzinfo=None),
-                    'chat_name':    chat_name,
-                    'author_name':  author_name,
-                    'author_link':  author_link,
-                    'user_id':      user_id,
-                    'link':         link,
-                    'text':         text,
-                    'html_text':    html_text,
-                    'score':        score,
-                    'account':      _acc,
-                    'src_chat_id':  raw_id,
-                    'src_msg_id':   msg.id,
-                    'grouped_refs': [(msg.chat_id, msg.id)],
+                    'date':          msg.date.replace(tzinfo=None),
+                    'chat_name':     chat_name,
+                    'author_name':   author_name,
+                    'author_link':   author_link,
+                    'user_id':       user_id,
+                    'link':          link,
+                    'text':          text,
+                    'html_text':     html_text,
+                    'score':         score,
+                    'account':       _acc,
+                    'src_chat_id':   raw_id,
+                    'src_msg_id':    msg.id,
+                    'grouped_refs':  [(msg.chat_id, msg.id)],
                     'channel_city':  meta.get('city', ''),
                     'channel_theme': meta.get('theme', ''),
                 }
-
                 metrics['processed'] += 1
                 await _process_and_publish(post, _client, [msg], ss, _acc)
 
