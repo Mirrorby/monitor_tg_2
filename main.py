@@ -14,7 +14,7 @@ import config
 from config import (
     API_ID_1, API_HASH_1, SESSION_1,
     API_ID_2, API_HASH_2, SESSION_2,
-    GEMINI_API_KEY, QUEUE_WORKERS,
+    GEMINI_API_KEY,
     state, seen_ids, published_fingerprints, ai_rejected_fingerprints,
     metrics, log,
 )
@@ -83,7 +83,6 @@ async def main():
 
     log.info('═══ TG Parser v5 стартует ═══')
 
-    # Railway успевает поднять сеть за 2-3 сек, 45 было избыточно
     await asyncio.sleep(5)
 
     config._sheets_lock = asyncio.Lock()
@@ -202,17 +201,17 @@ async def main():
     )
 
     # ══════════════════════════════════════════════════════════════════════
-    # Очередь постов
+    # Очередь постов и воркеры
     # ══════════════════════════════════════════════════════════════════════
 
     post_queue: asyncio.Queue = asyncio.Queue()
+    config.post_queue = post_queue
 
-    # ── Воркеры ────────────────────────────────────────────────────────────
     worker_tasks = []
-    for i in range(QUEUE_WORKERS):
+    for i in range(config.PROCESS_WORKERS):
         t = asyncio.create_task(_post_worker(i + 1, post_queue, clients, ss))
         worker_tasks.append(t)
-    log.info(f'Воркеры очереди: {QUEUE_WORKERS} запущено')
+    log.info(f'Воркеры очереди: {config.PROCESS_WORKERS} запущено')
 
     # ══════════════════════════════════════════════════════════════════════
     # Буфер альбомов и хендлеры
@@ -307,7 +306,6 @@ async def main():
             }
             metrics['processed'] += 1
 
-            # ← в очередь вместо прямого вызова
             post_queue.put_nowait({'post': post, 'msgs': msgs, 'acc': _acc})
             log.info(
                 f'[{_acc}][альбом→queue скор:{score}] {chat_name} '
@@ -418,7 +416,6 @@ async def main():
                 }
                 metrics['processed'] += 1
 
-                # ← в очередь вместо прямого вызова
                 post_queue.put_nowait({'post': post, 'msgs': [msg], 'acc': _acc})
                 log.info(
                     f'[{_acc}][→queue скор:{score}] {chat_name} → {link} '
@@ -451,7 +448,7 @@ async def main():
         f'Настройки обновляются каждые {config.SETTINGS_RELOAD_SEC}с. '
         f'Bot polling: /start /stop + модерация. '
         f'Рассылка в бот: {len(state["bot_subscribers"])} подписчиков. '
-        f'Воркеры: {QUEUE_WORKERS}.'
+        f'Воркеры: {config.PROCESS_WORKERS}.'
     )
 
     try:
