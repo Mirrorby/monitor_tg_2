@@ -20,6 +20,7 @@ SPREADSHEET_ID         = os.environ.get('SPREADSHEET_ID', '')
 GOOGLE_CREDENTIALS_B64 = os.environ.get('GOOGLE_CREDENTIALS_BASE64', '')
 SETTINGS_RELOAD_SEC    = int(os.environ.get('SETTINGS_RELOAD_INTERVAL', '300'))
 EXECUTOR_WORKERS       = int(os.environ.get('EXECUTOR_WORKERS', '8'))
+QUEUE_WORKERS          = int(os.environ.get('QUEUE_WORKERS', '3'))
 GEMINI_API_KEY         = os.environ.get('GEMINI_API_KEY', '')
 
 # Задержка между сообщениями при рассылке в бот (секунды)
@@ -71,7 +72,7 @@ pending_moderation: dict = {}
 
 # ── Пул потоков и блокировки (инициализируются в main) ─────────────────────────
 
-_executor = ThreadPoolExecutor(max_workers=EXECUTOR_WORKERS)
+_executor    = ThreadPoolExecutor(max_workers=EXECUTOR_WORKERS)
 _sheets_lock = None   # asyncio.Lock — создаётся в main()
 _state_lock  = None   # asyncio.Lock — создаётся в main()
 
