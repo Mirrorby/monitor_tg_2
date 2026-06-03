@@ -14,7 +14,7 @@ import config
 from config import (
     API_ID_1, API_HASH_1, SESSION_1,
     API_ID_2, API_HASH_2, SESSION_2,
-    GEMINI_API_KEY,
+    GEMINI_API_KEY, QUEUE_WORKERS,
     state, seen_ids, published_fingerprints, ai_rejected_fingerprints,
     metrics, log,
 )
@@ -38,16 +38,56 @@ from tasks import (
 )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Воркер очереди постов
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _post_worker(worker_id: int, queue: asyncio.Queue, clients: dict, ss):
+    """
+    Берёт посты из очереди и обрабатывает по одному.
+    Хендлер кладёт в очередь мгновенно и сразу освобождается —
+    Telethon не теряет входящие updates во время тяжёлой обработки.
+    """
+    log.info(f'[worker-{worker_id}] запущен')
+    while True:
+        try:
+            item   = await queue.get()
+            post   = item['post']
+            msgs   = item['msgs']
+            acc    = item['acc']
+            client = clients.get(acc)
+
+            if client is None:
+                log.warning(f'[worker-{worker_id}] клиент {acc} не найден — пропуск')
+                queue.task_done()
+                continue
+
+            try:
+                await _process_and_publish(post, client, msgs, ss, acc)
+            except Exception as e:
+                metrics['errors'] += 1
+                log.error(f'[worker-{worker_id}] ошибка: {e}', exc_info=True)
+            finally:
+                queue.task_done()
+
+        except asyncio.CancelledError:
+            log.info(f'[worker-{worker_id}] остановлен')
+            break
+        except Exception as e:
+            log.error(f'[worker-{worker_id}] неожиданная ошибка: {e}', exc_info=True)
+            await asyncio.sleep(1)
+
+
 async def main():
     global _sheets_lock, _state_lock
 
     log.info('═══ TG Parser v5 стартует ═══')
 
-    # Было 45 — уменьшено до 5: Railway успевает поднять сеть за 2-3 сек
+    # Railway успевает поднять сеть за 2-3 сек, 45 было избыточно
     await asyncio.sleep(5)
 
     config._sheets_lock = asyncio.Lock()
-    config._state_lock = asyncio.Lock()
+    config._state_lock  = asyncio.Lock()
     loop = asyncio.get_event_loop()
 
     # ── Google Sheets ──────────────────────────────────────────────────────
@@ -66,7 +106,7 @@ async def main():
     subscribers = await _safe_sheets_result(_read_bot_subscribers, ss)
 
     # ── Fingerprints ───────────────────────────────────────────────────────
-    initial_fps = await _safe_sheets_result(_load_published_fingerprints, ss)
+    initial_fps  = await _safe_sheets_result(_load_published_fingerprints, ss)
     rejected_fps = await _safe_sheets_result(_load_ai_rejected_fingerprints, ss)
     for fp in initial_fps:
         published_fingerprints.append(fp)
@@ -162,6 +202,19 @@ async def main():
     )
 
     # ══════════════════════════════════════════════════════════════════════
+    # Очередь постов
+    # ══════════════════════════════════════════════════════════════════════
+
+    post_queue: asyncio.Queue = asyncio.Queue()
+
+    # ── Воркеры ────────────────────────────────────────────────────────────
+    worker_tasks = []
+    for i in range(QUEUE_WORKERS):
+        t = asyncio.create_task(_post_worker(i + 1, post_queue, clients, ss))
+        worker_tasks.append(t)
+    log.info(f'Воркеры очереди: {QUEUE_WORKERS} запущено')
+
+    # ══════════════════════════════════════════════════════════════════════
     # Буфер альбомов и хендлеры
     # ══════════════════════════════════════════════════════════════════════
 
@@ -181,10 +234,10 @@ async def main():
             abs_id = abs(raw_id)
 
             async with config._state_lock:
-                id_to_meta   = dict(state['id_to_meta'])
-                minus_words  = list(state['minus_words'])
+                id_to_meta    = dict(state['id_to_meta'])
+                minus_words   = list(state['minus_words'])
                 scoring_rules = list(state['scoring_rules'])
-                min_length   = state['min_length']
+                min_length    = state['min_length']
                 mod_threshold = state['moderation_threshold']
 
             meta = _meta_by_abs_id(id_to_meta, abs_id)
@@ -253,7 +306,13 @@ async def main():
                 'channel_theme': meta.get('theme', ''),
             }
             metrics['processed'] += 1
-            await _process_and_publish(post, _client, msgs, ss, _acc)
+
+            # ← в очередь вместо прямого вызова
+            post_queue.put_nowait({'post': post, 'msgs': msgs, 'acc': _acc})
+            log.info(
+                f'[{_acc}][альбом→queue скор:{score}] {chat_name} '
+                f'| очередь: {post_queue.qsize()}'
+            )
 
         except Exception as e:
             metrics['errors'] += 1
@@ -358,7 +417,13 @@ async def main():
                     'channel_theme': meta.get('theme', ''),
                 }
                 metrics['processed'] += 1
-                await _process_and_publish(post, _client, [msg], ss, _acc)
+
+                # ← в очередь вместо прямого вызова
+                post_queue.put_nowait({'post': post, 'msgs': [msg], 'acc': _acc})
+                log.info(
+                    f'[{_acc}][→queue скор:{score}] {chat_name} → {link} '
+                    f'| очередь: {post_queue.qsize()}'
+                )
 
             except Exception as e:
                 metrics['errors'] += 1
@@ -385,7 +450,8 @@ async def main():
         f'Слушаю события. '
         f'Настройки обновляются каждые {config.SETTINGS_RELOAD_SEC}с. '
         f'Bot polling: /start /stop + модерация. '
-        f'Рассылка в бот: {len(state["bot_subscribers"])} подписчиков.'
+        f'Рассылка в бот: {len(state["bot_subscribers"])} подписчиков. '
+        f'Воркеры: {QUEUE_WORKERS}.'
     )
 
     try:
@@ -397,6 +463,8 @@ async def main():
                 log.info(f'{name}: отключён')
             except Exception:
                 pass
+        for t in worker_tasks:
+            t.cancel()
 
 
 if __name__ == '__main__':
