@@ -130,38 +130,6 @@ def _build_multipart(fields: dict, files: dict) -> tuple[bytes, str]:
     body = b'\r\n'.join(parts) + f'\r\n--{boundary}--'.encode('utf-8')
     return body, f'multipart/form-data; boundary={boundary}'
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Отправка фото/альбомов в канал (режим дублирования)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _send_photo_bot(token: str, chat_id: str, caption: str, photo: bytes):
-    url = f'https://api.telegram.org/bot{token}/sendPhoto'
-    body, ct = _build_multipart(
-        fields={'chat_id': chat_id, 'caption': caption[:1024], 'parse_mode': 'HTML'},
-        files={'photo': ('photo.jpg', photo, 'image/jpeg')},
-    )
-    _bot_request_raw(url, body, ct, timeout=30, label='sendPhoto')
-    time.sleep(0.3)
-
-
-def _send_album_bot(token: str, chat_id: str, caption: str, photos: list[bytes]):
-    photos = photos[:10]
-    url = f'https://api.telegram.org/bot{token}/sendMediaGroup'
-    media_json = []
-    for i in range(len(photos)):
-        item: dict = {'type': 'photo', 'media': f'attach://p{i}'}
-        if i == 0:
-            item['caption'] = caption[:1024]
-            item['parse_mode'] = 'HTML'
-        media_json.append(item)
-    fields = {'chat_id': chat_id, 'media': json.dumps(media_json)}
-    files  = {f'p{i}': (f'p{i}.jpg', pb, 'image/jpeg') for i, pb in enumerate(photos)}
-    body, ct = _build_multipart(fields, files)
-    _bot_request_raw(url, body, ct, timeout=60, label='sendMediaGroup')
-    time.sleep(0.3)
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Построение текста и клавиатуры для бота
 # ══════════════════════════════════════════════════════════════════════════════
@@ -411,39 +379,6 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
 # ══════════════════════════════════════════════════════════════════════════════
 # Карточка модерации
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _build_caption(post: dict) -> str:
-    """Подпись для поста в канал (с текстовыми ссылками на автора и источник)."""
-    chat_name   = post.get('chat_name', '') or 'Источник'
-    link        = post['link']
-    author_name = post.get('author_name', '').strip()
-    author_link = post.get('author_link', '').strip()
-    ai_decision = post.get('ai_decision', '')
-
-    if ai_decision == 'approve_private':
-        label = '👤 Частный клиент'
-    elif ai_decision == 'approve_agent':
-        label = '🏢 Риэлтор'
-    else:
-        label = ''
-
-    source_line = f'Источник: <a href="{link}">{chat_name}</a>'
-    if author_name and author_link:
-        author_line = f'Автор: <a href="{author_link}">{author_name}</a>'
-    elif author_name:
-        author_line = f'Автор: {author_name}'
-    else:
-        author_line = ''
-
-    text = post['text']
-    header_parts = [p for p in [author_line, source_line, label] if p]
-    header = '\n'.join(header_parts)
-    max_text = 4096 - len(header) - 3
-    if len(text) > max_text:
-        text = text[:max_text].rstrip() + '…'
-
-    return f'{header}\n\n{text}'
-
 
 def _send_moderation_card(post: dict, token: str, moderator_chat_id: str) -> int:
     author_str = '—'
