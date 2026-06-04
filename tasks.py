@@ -7,21 +7,20 @@ import time
 
 import config
 from config import (
-    SETTINGS_RELOAD_SEC, state, _executor, metrics, pending_moderation,
+    SETTINGS_RELOAD_SEC, state, _executor, metrics,
     published_fingerprints, log,
 )
 from sheets import (
     _safe_sheets, _safe_sheets_retry, _safe_sheets_result,
     _read_settings, _read_scoring_rules, _read_minus_words,
     _read_realtors_raw, _read_channels, _read_bot_subscribers,
-    _write_post, _update_rejected_status, _add_realtor_to_sheet,
+    _write_post, _add_realtor_to_sheet,
     _parse_excluded_accounts, _expire_crm_subscriptions,
 )
 from sheets import _resolve_realtors
 from channels import _update_watched_chats
 from bot_api import (
-    _tg_request, _get_updates, _answer_callback, _edit_message_reply_markup,
-    _broadcast_to_bot, _send_moderation_card,
+    _tg_request, _get_updates, _broadcast_to_bot,
 )
 from sheets import _post_fingerprint
 
@@ -120,26 +119,6 @@ async def _settings_reload_loop(clients: dict, ss):
         except Exception as e:
             log.error('Ошибка перезагрузки настроек: ' + str(e), exc_info=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Очистка устаревших pending-постов
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def _cleanup_pending_loop():
-    while True:
-        await asyncio.sleep(3600)
-        try:
-            cutoff = time.time() - 86400
-            stale  = [k for k, v in pending_moderation.items()
-                      if v.get('added_at', 0) < cutoff]
-            for k in stale:
-                pending_moderation.pop(k, None)
-            if stale:
-                log.info(f'Cleanup: удалено {len(stale)} устаревших pending-постов')
-        except Exception as e:
-            log.error(f'Ошибка cleanup pending: {e}', exc_info=True)
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Heartbeat
 # ══════════════════════════════════════════════════════════════════════════════
@@ -154,12 +133,10 @@ async def _heartbeat_loop():
             log.info(
                 f'[heartbeat] processed:{metrics["processed"]} '
                 f'published:{metrics["published"]} '
-                f'moderated:{metrics["moderated"]} '
                 f'errors:{metrics["errors"]} '
                 f'bot_sent:{metrics["bot_sent"]} '
                 f'bot_blocked:{metrics["bot_blocked"]} '
                 f'subscribers:{len(state["bot_subscribers"])} '
-                f'pending_mod:{len(pending_moderation)} '
                 f'queue:{qsize}'
             )
 
@@ -219,7 +196,6 @@ async def _bot_polling_loop(clients: dict, ss):
     while True:
         async with config._state_lock:
             token     = state['tg_token']
-            moderator = state['moderator_chat_id']
 
         if not token:
             await asyncio.sleep(5)
@@ -384,137 +360,14 @@ async def _handle_stop(loop, token: str, chat_id: int, ss):
 # ── callback_query (модерация) ─────────────────────────────────────────────────
 
 async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: dict, ss):
-    cq_id   = cq['id']
-    data    = cq.get('data', '')
-    from_id = cq.get('from', {}).get('id', '')
-    msg_id  = cq.get('message', {}).get('message_id', 0)
+    cq_id = cq['id']
+    data = cq.get('data', '')
 
     if data.startswith('city:'):
         city = data.split(':', 1)[1].strip()
         await _handle_city_choice(loop, cq, token, city, ss)
         return
-
-    parts = data.split(':', 2)
-    if len(parts) != 3 or parts[0] not in ('approve_private', 'approve_agent', 'skip'):
-        await loop.run_in_executor(
-            _executor, _answer_callback, token, cq_id, '⚠️ Неизвестная команда'
-        )
-        return
-
-    action, src_chat_id_str, src_msg_id_str = parts
-    pend_key = f'{src_chat_id_str}:{src_msg_id_str}'
-    post     = pending_moderation.get(pend_key)
-
-    if not post:
-        await loop.run_in_executor(
-            _executor, _answer_callback, token, cq_id,
-            '⚠️ Пост уже обработан или не найден в памяти'
-        )
-        await loop.run_in_executor(
-            _executor, _edit_message_reply_markup,
-            token, moderator, msg_id, '⚠️ Пост не найден в очереди'
-        )
-        return
-
-    if action in ('approve_private', 'approve_agent'):
-        client = next(iter(clients.values()), None)
-        async with config._state_lock:
-            dest_private = state['dest_chat_id']
-            dest_agent   = state.get('dest_chat_id_agent', '')
-        target = dest_agent if (action == 'approve_agent' and dest_agent) else dest_private
-
-        if client:
-            try:
-                if post.get('_processing'):
-                    await loop.run_in_executor(
-                        _executor, _answer_callback, token, cq_id, '⏳ Уже обрабатывается'
-                    )
-                    return
-                post['_processing'] = True
-
-                fp = _post_fingerprint(post['text'], post['author_name'])
-                if fp in published_fingerprints:
-                    log.info(f'[модерация ⛔ дубль] {post["chat_name"]}')
-                    await loop.run_in_executor(
-                        _executor, _answer_callback, token, cq_id,
-                        '⛔ Дубль — такой пост уже опубликован'
-                    )
-                    await loop.run_in_executor(
-                        _executor, _edit_message_reply_markup,
-                        token, moderator, msg_id, '⛔ Дубль — публикация отменена'
-                    )
-                    pending_moderation.pop(pend_key, None)
-                    return
-
-                photos = post.pop('_photos', []) or []
-                post['ai_decision'] = action
-                label = '👤 частный' if action == 'approve_private' else '🏢 агент'
-
-                if action == 'approve_agent':
-                    user_id = post.get('user_id', 0)
-                    async with config._state_lock:
-                        known_realtors = set(state.get('realtors', set()))
-                    if user_id and user_id not in known_realtors:
-                        await _safe_sheets_retry(_add_realtor_to_sheet, ss, post, user_id)
-                        async with config._state_lock:
-                            state['realtors'].add(user_id)
-                        log.info(f'[модерация] новый риэлтор записан user_id={user_id}')
-
-                if target:
-                    ok = await _publish_to_channel(client, post, target, photos or None)
-                    if not ok:
-                        metrics['errors'] += 1
-
-                await _broadcast_to_bot(post, photos, ss)
-
-                published_fingerprints.append(fp)
-                metrics['published'] += 1
-                log.info(
-                    f'[модерация ✅ {label} фото:{len(photos)}] '
-                    f'{post["chat_name"]} → {post["link"]}'
-                )
-                await _safe_sheets_retry(_write_post, ss, post)
-                await _safe_sheets(
-                    _update_rejected_status, ss,
-                    post.get('bot_message_id', 0), f'одобрено ({label})'
-                )
-                await loop.run_in_executor(
-                    _executor, _answer_callback, token, cq_id,
-                    f'✅ Опубликовано ({label})!'
-                )
-                await loop.run_in_executor(
-                    _executor, _edit_message_reply_markup,
-                    token, moderator, msg_id,
-                    f'✅ {label.capitalize()} — опубликовано модератором {from_id}'
-                )
-            except Exception as e:
-                metrics['errors'] += 1
-                log.error(f'[модерация] Ошибка: {e}', exc_info=True)
-                await loop.run_in_executor(
-                    _executor, _answer_callback, token, cq_id, f'❌ Ошибка: {e}'
-                )
-        else:
-            await loop.run_in_executor(
-                _executor, _answer_callback, token, cq_id,
-                '⚠️ Нет активного Telethon-клиента'
-            )
-
-    elif action == 'skip':
-        log.info(f'[модерация ❌ пропущено] {post["chat_name"]} → {post["link"]}')
-        post.pop('_photos', None)
-        await _safe_sheets(
-            _update_rejected_status, ss, post.get('bot_message_id', 0), 'пропущено'
-        )
-        await loop.run_in_executor(
-            _executor, _answer_callback, token, cq_id, '❌ Пост пропущен'
-        )
-        await loop.run_in_executor(
-            _executor, _edit_message_reply_markup,
-            token, moderator, msg_id,
-            f'❌ Пропущено модератором {from_id}'
-        )
-
-    pending_moderation.pop(pend_key, None)
+    # неизвестная callback — молча игнорируем
 
 
 async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
