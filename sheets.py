@@ -94,8 +94,6 @@ def _read_settings(ss):
             'moderation_threshold': int(val(3) or 3),
             'min_length':           int(val(4) or 20),
             'moderator_chat_id':    val(5),
-            'dest_chat_id':         val(6),
-            'dest_chat_id_agent':   val(7),
             'excluded_accounts':    val(8),
         }
     except Exception as e:
