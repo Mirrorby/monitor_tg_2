@@ -23,7 +23,6 @@ from bot_api import (
     _tg_request, _get_updates, _answer_callback, _edit_message_reply_markup,
     _broadcast_to_bot, _send_moderation_card,
 )
-from publisher import _publish_to_channel
 from sheets import _post_fingerprint
 
 
