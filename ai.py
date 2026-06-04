@@ -123,7 +123,7 @@ async def _call_gemini_async(prompt: str) -> str:
         if resp.status != 200:
             body = await resp.text()
             log.warning(f'[gemini] HTTP {resp.status}: {body[:200]} — fallback: moderation')
-            return 'MODERATION_NEEDED'
+            return 'approve_private'
         data = await resp.json(content_type=None)
 
     candidate = data.get('candidates', [{}])[0]
@@ -164,17 +164,17 @@ async def _ai_moderate(
                 await asyncio.sleep(wait)
             else:
                 log.warning(f'[gemini] RuntimeError: {e} — fallback: moderation')
-                return 'MODERATION_NEEDED'
+                return 'approve_private'
         except asyncio.TimeoutError:
             wait = (attempt + 1) * 5
             log.warning(f'[gemini] timeout — sleep {wait}s (попытка {attempt + 1}/3)')
             await asyncio.sleep(wait)
         except Exception as e:
             log.warning(f'[gemini] ошибка: {e} — fallback: moderation')
-            return 'MODERATION_NEEDED'
+            return 'approve_private'
 
-    log.warning('[gemini] все попытки исчерпаны → модерация')
-    return 'MODERATION_NEEDED'
+    log.warning('[gemini] все попытки исчерпаны → approve_private')
+    return 'approve_private'
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -62,9 +62,6 @@ seen_ids:                deque = deque(maxlen=2000)
 published_fingerprints:  deque = deque(maxlen=10000)
 ai_rejected_fingerprints: deque = deque(maxlen=10000)
 
-# ── Очередь ожидающих модерации ────────────────────────────────────────────────
-pending_moderation: dict = {}
-
 # ── Очередь постов для воркеров (инициализируется в main) ──────────────────────
 post_queue: asyncio.Queue = None
 
@@ -80,7 +77,6 @@ _state_lock    = None   # asyncio.Lock
 metrics = {
     'processed':   0,
     'published':   0,
-    'moderated':   0,
     'errors':      0,
     'bot_sent':    0,
     'bot_blocked': 0,

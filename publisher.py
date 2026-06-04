@@ -3,24 +3,22 @@
 """
 import asyncio
 import io
-import time
 
 from telethon import TelegramClient
 
 import config
 from config import (
-    state, _executor, metrics, pending_moderation,
+    state, _executor, metrics,
     published_fingerprints, ai_rejected_fingerprints,
     log,
 )
 from sheets import (
     _safe_sheets, _safe_sheets_retry,
-    _write_post, _write_rejected, _write_ai_rejected, _add_realtor_to_sheet,
-    _update_rejected_status,
+    _write_post, _write_ai_rejected, _add_realtor_to_sheet,
 )
 from sheets import _post_fingerprint
 from ai import _ai_moderate
-from bot_api import _broadcast_to_bot, _send_moderation_card
+from bot_api import _broadcast_to_bot
 from utils import _get_sender_bio
 
 
@@ -169,29 +167,6 @@ async def _process_and_publish(
     # 7. approve_private / approve_agent
     if ai_decision in ('approve_private', 'approve_agent'):
         await _do_publish(post, client, ss, acc, ai_decision, photos or None)
-        return
-
-    # 8. MODERATION_NEEDED (Gemini недоступен)
-    if ai_decision == 'MODERATION_NEEDED':
-        async with config._state_lock:
-            token     = state['tg_token']
-            moderator = state['moderator_chat_id']
-        if token and moderator:
-            pend_key = f'{post["src_chat_id"]}:{post["src_msg_id"]}'
-            post['added_at'] = time.time()
-            pending_moderation[pend_key] = post
-            post['_photos'] = photos
-            loop = asyncio.get_event_loop()
-            bot_message_id = await loop.run_in_executor(
-                _executor, _send_moderation_card, post, token, moderator
-            )
-            post['bot_message_id'] = bot_message_id
-            await _safe_sheets_retry(_write_rejected, ss, post, bot_message_id)
-            metrics['moderated'] += 1
-            log.info(f'[{acc}][gemini недоступен → модерация] {chat_name} → {link}')
-        else:
-            log.warning(f'[{acc}][gemini недоступен, модератор не задан → approve_private] {link}')
-            await _do_publish(post, client, ss, acc, 'approve_private', photos or None)
         return
 
     # Неизвестный ответ AI → approve_private
