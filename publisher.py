@@ -19,11 +19,8 @@ from sheets import (
     _update_rejected_status,
 )
 from sheets import _post_fingerprint
-from ai import _ai_moderate, _pick_dest_chat
-from bot_api import (
-    _tg_request, _send_alert, _send_photo_bot, _send_album_bot,
-    _build_caption, _send_moderation_card, _broadcast_to_bot,
-)
+from ai import _ai_moderate
+from bot_api import _broadcast_to_bot, _send_moderation_card
 from utils import _get_sender_bio
 
 
@@ -67,98 +64,31 @@ async def _fetch_messages_by_refs(client: TelegramClient, refs: list[tuple]) -> 
             log.warning(f'Не удалось загрузить сообщение {chat_id}/{msg_id}: {e}', exc_info=True)
     return msgs
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Публикация в канал (режим дублирования)
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def _publish_to_channel(
-    client: TelegramClient,
-    post: dict,
-    dest_chat: str,
-    photos: list[bytes] | None = None,
-) -> bool:
-    """Публикация в канал (режим дублирования)."""
-    caption = _build_caption(post)
-    token   = state.get('tg_token', '')
-    loop    = asyncio.get_event_loop()
-    try:
-        if photos and token:
-            if len(photos) == 1:
-                await loop.run_in_executor(_executor, _send_photo_bot,
-                                           token, dest_chat, caption, photos[0])
-            else:
-                await loop.run_in_executor(_executor, _send_album_bot,
-                                           token, dest_chat, caption, photos)
-        elif photos and not token:
-            await client.send_file(
-                entity=int(dest_chat),
-                file=photos if len(photos) > 1 else photos[0],
-                caption=caption,
-                parse_mode='html',
-            )
-        else:
-            await client.send_message(
-                entity=int(dest_chat),
-                message=caption,
-                parse_mode='html',
-                link_preview=True,
-            )
-        return True
-    except Exception as e:
-        log.error(f'Ошибка публикации в канал: {e}', exc_info=True)
-        return False
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Финальная публикация
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _do_publish(
-    post: dict,
-    client: TelegramClient,
-    ss,
-    acc: str,
-    ai_decision: str,
-    photos: list[bytes] | None = None,
-):
-    """
-    Финальная публикация:
-      1. В канал (если dest_chat_id задан) — режим дублирования
-      2. В бот всем подписчикам — всегда
-    """
+async def _do_publish(post, client, ss, acc, ai_decision, photos=None):
     user_id = post.get('user_id', 0)
     async with config._state_lock:
         realtors = set(state.get('realtors', set()))
     if user_id and user_id in realtors and ai_decision not in ('approve_agent', 'skip'):
-        log.info(f'[{acc}][риэлтор из списка] user_id={user_id} → approve_agent')
         ai_decision = 'approve_agent'
 
     post['ai_decision'] = ai_decision
     fp = _post_fingerprint(post['text'], post['author_name'])
 
-    # 1. Публикация в канал (дублирование)
-    target = _pick_dest_chat(ai_decision)
-    if target:
-        ok = await _publish_to_channel(client, post, target, photos)
-        if not ok:
-            metrics['errors'] += 1
-
-    # 2. Рассылка в бот
     await _broadcast_to_bot(post, photos or [], ss)
 
-    # 3. Запись в Sheets
     published_fingerprints.append(fp)
     await _safe_sheets_retry(_write_post, ss, post)
     metrics['published'] += 1
 
     log.info(
         f'[✅ AI:{ai_decision} acc:{acc}] {post["chat_name"]} → {post["link"]} '
-        f'| канал: {target or "—"} '
         f'| бот: {len(state["bot_subscribers"])} подписчиков'
     )
-
-
+    
 # ══════════════════════════════════════════════════════════════════════════════
 # Основная функция обработки поста
 # ══════════════════════════════════════════════════════════════════════════════
