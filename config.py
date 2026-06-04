@@ -46,8 +46,6 @@ state = {
     'moderation_threshold': 4,
     'min_length':           20,
     'moderator_chat_id':    '',
-    'dest_chat_id':         '',
-    'dest_chat_id_agent':   '',
     'scoring_rules':        [],
     'minus_words':          [],
     'watched_ids':          set(),
