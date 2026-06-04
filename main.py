@@ -126,8 +126,6 @@ async def main():
         'moderation_threshold': settings['moderation_threshold'],
         'min_length':           settings['min_length'],
         'moderator_chat_id':    settings['moderator_chat_id'],
-        'dest_chat_id':         settings['dest_chat_id'],
-        'dest_chat_id_agent':   settings.get('dest_chat_id_agent', ''),
         'scoring_rules':        rules,
         'minus_words':          minus,
         'excluded_accounts':    _parse_excluded_accounts(settings.get('excluded_accounts', '')),
@@ -139,8 +137,6 @@ async def main():
         f'порог модерации: {state["moderation_threshold"]} | '
         f'мин.длина: {state["min_length"]} | '
         f'правил: {len(rules)} | минус-слов: {len(minus)} | '
-        f'канал частных: {state["dest_chat_id"] or "—"} | '
-        f'канал агентов: {state["dest_chat_id_agent"] or "—"} | '
         f'подписчиков бота: {len(subscribers)}'
     )
 
