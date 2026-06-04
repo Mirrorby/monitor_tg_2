@@ -37,13 +37,33 @@ async def _settings_reload_loop(clients: dict, ss):
         try:
             loop = asyncio.get_event_loop()
             log.info('Перезагрузка настроек...')
-            new_settings    = await _safe_sheets_result(_read_settings,         ss)
-            new_rules       = await _safe_sheets_result(_read_scoring_rules,    ss)
-            new_minus       = await _safe_sheets_result(_read_minus_words,      ss)
-            resolved_r, to_resolve_r = await _safe_sheets_result(_read_realtors_raw, ss)
-            new_realtors    = await _resolve_realtors(ss, clients, resolved_r, to_resolve_r)
-            new_channels    = await _safe_sheets_result(_read_channels,         ss)
-            new_subscribers = await _safe_sheets_result(_read_bot_subscribers,  ss)
+
+            # Читаем все листы одним батчем внутри одного lock-окна.
+            # Раньше было 6 отдельных _safe_sheets_result — каждый захватывал
+            # _sheets_lock на 1-3 сек, итого 6-18 сек блокировки для воркеров.
+            # Теперь один захват lock на всё чтение (~3-5 сек суммарно).
+            def _read_all_sheets(ss):
+                return (
+                    _read_settings(ss),
+                    _read_scoring_rules(ss),
+                    _read_minus_words(ss),
+                    _read_realtors_raw(ss),
+                    _read_channels(ss),
+                    _read_bot_subscribers(ss),
+                )
+
+            async with config._sheets_lock:
+                (
+                    new_settings,
+                    new_rules,
+                    new_minus,
+                    (resolved_r, to_resolve_r),
+                    new_channels,
+                    new_subscribers,
+                ) = await loop.run_in_executor(_executor, _read_all_sheets, ss)
+
+            # Резолв риэлторов — без lock, это Telethon-запросы
+            new_realtors = await _resolve_realtors(ss, clients, resolved_r, to_resolve_r)
 
             if new_settings:
                 async with config._state_lock:
@@ -58,17 +78,21 @@ async def _settings_reload_loop(clients: dict, ss):
                         'excluded_accounts':    _parse_excluded_accounts(
                                                     new_settings.get('excluded_accounts', '')),
                     })
-            if new_rules       is not None:
-                async with config._state_lock: state['scoring_rules']   = new_rules
-            if new_minus       is not None:
-                async with config._state_lock: state['minus_words']     = new_minus
-            if new_realtors    is not None:
-                async with config._state_lock: state['realtors']        = new_realtors
+            if new_rules is not None:
+                async with config._state_lock:
+                    state['scoring_rules'] = new_rules
+            if new_minus is not None:
+                async with config._state_lock:
+                    state['minus_words'] = new_minus
+            if new_realtors is not None:
+                async with config._state_lock:
+                    state['realtors'] = new_realtors
             if new_subscribers is not None:
-                async with config._state_lock: state['bot_subscribers'] = new_subscribers
-            if new_channels    is not None:
+                async with config._state_lock:
+                    state['bot_subscribers'] = new_subscribers
+            if new_channels is not None:
                 await _update_watched_chats(clients, new_channels, ss)
-                
+
             # Проверка истёкших подписок
             expired_ids = await _safe_sheets_result(_expire_crm_subscriptions, ss)
             if expired_ids:
@@ -130,7 +154,7 @@ async def _heartbeat_loop():
     while True:
         await asyncio.sleep(300)
         try:
-            qsize = config.post_queue.qsize() if config.post_queue else 0
+            qsize = config.post_queue.qsize() if config.post_queue is not None else 0
 
             log.info(
                 f'[heartbeat] processed:{metrics["processed"]} '
@@ -150,10 +174,10 @@ async def _heartbeat_loop():
 
             if qsize >= config.QUEUE_ALERT_THRESHOLD and not config.queue_alert_sent:
                 config.queue_alert_sent = True
-                log.warning(f'[heartbeat] ⚠️ очередь постов: {qsize} — отправляю алерт модератору')
+                log.warning(f'[heartbeat] ⚠️ очередь постов: {qsize}')
                 if token and moderator:
                     await loop.run_in_executor(
-                        config._executor, config._tg_request_alert, token, moderator, qsize
+                        _executor, config._tg_request_alert, token, moderator, qsize
                     )
 
             if qsize < config.QUEUE_ALERT_THRESHOLD // 2 and config.queue_alert_sent:
@@ -161,7 +185,7 @@ async def _heartbeat_loop():
                 log.info(f'[heartbeat] очередь нормализовалась: {qsize}')
                 if token and moderator:
                     await loop.run_in_executor(
-                        config._executor, config._tg_request_alert_ok, token, moderator, qsize
+                        _executor, config._tg_request_alert_ok, token, moderator, qsize
                     )
 
         except Exception as e:
@@ -179,7 +203,6 @@ async def _bot_polling_loop(clients: dict, ss):
     def _first_client():
         return next(iter(clients.values()), None)
 
-    # Сбрасываем webhook и ждём свободного слота
     token = state['tg_token']
     if token:
         for attempt in range(10):
@@ -233,7 +256,6 @@ async def _bot_polling_loop(clients: dict, ss):
         for upd in updates:
             offset = upd['update_id'] + 1
 
-            # ── /start и /stop ─────────────────────────────────────────────
             msg = upd.get('message')
             if msg:
                 chat_id  = msg.get('chat', {}).get('id')
@@ -242,11 +264,9 @@ async def _bot_polling_loop(clients: dict, ss):
 
                 if text.startswith('/start'):
                     await _handle_start(loop, token, moderator, chat_id, username, ss)
-
                 elif text.startswith('/stop'):
                     await _handle_stop(loop, token, chat_id, ss)
 
-            # ── callback_query — модерация ──────────────────────────────────
             cq = upd.get('callback_query')
             if not cq:
                 continue
@@ -257,8 +277,6 @@ async def _bot_polling_loop(clients: dict, ss):
 
 
 # ── /start ─────────────────────────────────────────────────────────────────────
-
-# СТАЛО — полная замена функции _handle_start:
 
 async def _handle_start(loop, token: str, moderator: str, chat_id: int, username: str, ss):
     from sheets import _safe_sheets_result, _safe_sheets_retry
@@ -279,18 +297,15 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
                 }
             )
         else:
-            # Подписан, но город не выбран — показываем кнопки снова
             await _send_city_selection(loop, token, chat_id)
         return
 
-    # Регистрируем подписчика (без города — он выберет через кнопку)
     added = await _safe_sheets_result(_add_bot_subscriber, ss, chat_id, username)
     if not added:
         return
 
     trial_end = added.get('trial_end', '') if isinstance(added, dict) else ''
 
-    # Уведомляем модератора о новом подписчике
     if isinstance(added, dict) and added.get('is_new') and token and moderator:
         notify_text = (
             f'🆕 <b>Новый подписчик без записи в CRM</b>\n\n'
@@ -307,11 +322,9 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
             }
         )
 
-    # Временно добавляем в state без города
     async with config._state_lock:
         state['bot_subscribers'][chat_id] = {'city': '', 'theme': ''}
 
-    # Отправляем приветствие + выбор города
     await loop.run_in_executor(
         _executor, _tg_request, token, 'sendMessage', {
             'chat_id': chat_id,
@@ -325,8 +338,8 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
     )
     await _send_city_selection(loop, token, chat_id)
 
+
 async def _send_city_selection(loop, token: str, chat_id: int):
-    """Отправляет сообщение с inline-кнопками выбора города."""
     await loop.run_in_executor(
         _executor, _tg_request, token, 'sendMessage', {
             'chat_id': chat_id,
@@ -339,6 +352,7 @@ async def _send_city_selection(loop, token: str, chat_id: int):
             },
         }
     )
+
 
 # ── /stop ──────────────────────────────────────────────────────────────────────
 
@@ -379,6 +393,7 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
     data    = cq.get('data', '')
     from_id = cq.get('from', {}).get('id', '')
     msg_id  = cq.get('message', {}).get('message_id', 0)
+
     if data.startswith('city:'):
         city = data.split(':', 1)[1].strip()
         await _handle_city_choice(loop, cq, token, city, ss)
@@ -506,6 +521,7 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
 
     pending_moderation.pop(pend_key, None)
 
+
 async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
     from sheets import _safe_sheets_retry, _set_subscriber_city
 
@@ -513,10 +529,8 @@ async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
     chat_id = cq.get('from', {}).get('id')
     msg_id  = cq.get('message', {}).get('message_id', 0)
 
-    # Записываем в CRM
     await _safe_sheets_retry(_set_subscriber_city, ss, chat_id, city)
 
-    # Обновляем state
     async with config._state_lock:
         if chat_id in state['bot_subscribers']:
             state['bot_subscribers'][chat_id]['city'] = city
@@ -525,7 +539,6 @@ async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
 
     log.info(f'[бот] chat_id={chat_id} выбрал город: {city}')
 
-    # Убираем кнопки с сообщения
     await loop.run_in_executor(
         _executor, _tg_request, token, 'editMessageReplyMarkup', {
             'chat_id':      chat_id,
@@ -534,7 +547,6 @@ async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
         }
     )
 
-    # Подтверждение
     await loop.run_in_executor(
         _executor, _tg_request, token, 'sendMessage', {
             'chat_id': chat_id,
