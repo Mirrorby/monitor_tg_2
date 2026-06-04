@@ -8,7 +8,7 @@ import time
 import urllib.request
 import urllib.error
 
-from config import state, _executor, metrics, BOT_BROADCAST_DELAY, log
+from config import state, _executor, BOT_BROADCAST_DELAY, log
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -374,41 +374,3 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
                 state['bot_subscribers'].pop(cid, None)
         for cid in blocked_ids:
             await _safe_sheets_retry(_remove_bot_subscriber, ss, cid)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Карточка модерации
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _send_moderation_card(post: dict, token: str, moderator_chat_id: str) -> int:
-    author_str = '—'
-    if post['author_name']:
-        if post['author_link']:
-            author_str = f'<a href="{post["author_link"]}">{post["author_name"]}</a>'
-        else:
-            author_str = post['author_name']
-
-    pend_key = f'{post["src_chat_id"]}:{post["src_msg_id"]}'
-    lines = [
-        f'📢 <b>Источник:</b> {post["chat_name"]}',
-        f'👤 <b>Автор:</b> {author_str}',
-        f'🏆 <b>Скор:</b> {post["score"]}',
-        '',
-        post['html_text'][:3500],
-        '',
-        f'🔗 <a href="{post["link"]}">Открыть сообщение</a>',
-    ]
-    result = _tg_request(token, 'sendMessage', {
-        'chat_id':    moderator_chat_id,
-        'text':       '\n'.join(lines)[:4096],
-        'parse_mode': 'HTML',
-        'disable_web_page_preview': True,
-        'reply_markup': {
-            'inline_keyboard': [[
-                {'text': '👤 Частный',    'callback_data': f'approve_private:{pend_key}'},
-                {'text': '🏢 Агент',      'callback_data': f'approve_agent:{pend_key}'},
-                {'text': '❌ Пропустить', 'callback_data': f'skip:{pend_key}'},
-            ]]
-        },
-    })
-    return result.get('result', {}).get('message_id', 0)
