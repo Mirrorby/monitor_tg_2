@@ -430,8 +430,6 @@ async def main():
         f'правил: {len(state["scoring_rules"])} | '
         f'порог: {state["score_threshold"]} | '
         f'подписчиков бота: {len(subscribers)} | '
-        f'канал частных: {state["dest_chat_id"] or "—"} | '
-        f'канал агентов: {state["dest_chat_id_agent"] or "—"}'
     )
 
     asyncio.create_task(_settings_reload_loop(clients, ss))
