@@ -34,7 +34,7 @@ from bot_api import _tg_request
 from publisher import _process_and_publish
 from tasks import (
     _settings_reload_loop, _bot_polling_loop,
-    _cleanup_pending_loop, _heartbeat_loop,
+    _heartbeat_loop,
 )
 
 
@@ -434,7 +434,6 @@ async def main():
 
     asyncio.create_task(_settings_reload_loop(clients, ss))
     asyncio.create_task(_bot_polling_loop(clients, ss))
-    asyncio.create_task(_cleanup_pending_loop())
     asyncio.create_task(_heartbeat_loop())
 
     log.info(
