@@ -73,8 +73,6 @@ async def _settings_reload_loop(clients: dict, ss):
                         'moderation_threshold': new_settings['moderation_threshold'],
                         'min_length':           new_settings['min_length'],
                         'moderator_chat_id':    new_settings['moderator_chat_id'],
-                        'dest_chat_id':         new_settings['dest_chat_id'],
-                        'dest_chat_id_agent':   new_settings.get('dest_chat_id_agent', ''),
                         'excluded_accounts':    _parse_excluded_accounts(
                                                     new_settings.get('excluded_accounts', '')),
                     })
@@ -119,8 +117,6 @@ async def _settings_reload_loop(clients: dict, ss):
                 f'минус-слов: {len(state["minus_words"])} | '
                 f'порог: {state["score_threshold"]} | '
                 f'подписчиков бота: {len(state["bot_subscribers"])} | '
-                f'канал частных: {state["dest_chat_id"] or "—"} | '
-                f'канал агентов: {state["dest_chat_id_agent"] or "—"}'
             )
         except Exception as e:
             log.error('Ошибка перезагрузки настроек: ' + str(e), exc_info=True)
