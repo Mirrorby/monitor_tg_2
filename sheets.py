@@ -476,24 +476,6 @@ def _write_post(ss, post):
         log.error('Ошибка записи поста: ' + str(e), exc_info=True)
         raise
 
-
-def _write_rejected(ss, post, bot_message_id):
-    try:
-        ss.worksheet('Отклонённые').append_row([
-            _local_dt(post['date']).strftime('%Y-%m-%d %H:%M:%S'),
-            post['chat_name'],
-            post['link'],
-            _flatten_text(post['text']),
-            post['score'],
-            'ожидает',
-            str(bot_message_id),
-            post['account'],
-        ], value_input_option='USER_ENTERED')
-    except Exception as e:
-        log.error('Ошибка записи отклонённого поста: ' + str(e), exc_info=True)
-        raise
-
-
 def _write_ai_rejected(ss, post: dict, ai_decision: str):
     try:
         ss.worksheet('Отклонено ИИ').append_row([
@@ -592,18 +574,6 @@ def _write_entity_cache(ss):
         log.info(f'Кеш записан: {len(rows) - 1} каналов')
     except Exception as e:
         log.error(f'Ошибка записи кеша: {e}', exc_info=True)
-
-def _update_rejected_status(ss, bot_message_id: int, new_status: str):
-    try:
-        ws   = ss.worksheet('Отклонённые')
-        data = ws.get_all_values()
-        for i, row in enumerate(data[1:], start=2):
-            if len(row) > 6 and str(row[6]) == str(bot_message_id):
-                ws.update(values=[[new_status]], range_name=f'F{i}')
-                return
-    except Exception as e:
-        log.error(f'Ошибка обновления статуса отклонённого поста: {e}', exc_info=True)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Fingerprints
