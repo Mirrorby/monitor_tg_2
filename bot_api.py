@@ -8,7 +8,7 @@ import time
 import urllib.request
 import urllib.error
 
-from config import state, _executor, BOT_BROADCAST_DELAY, log
+from config import state, _executor, metrics, BOT_BROADCAST_DELAY, log
 
 
 # ══════════════════════════════════════════════════════════════════════════════
