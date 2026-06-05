@@ -1,6 +1,6 @@
 """
-Telegram Bot API: транспорт, рассылка подписчикам, отправка фото/альбомов,
-карточка модерации, построение текста и клавиатуры для бота.
+Telegram Bot API: транспорт, рассылка подписчикам,
+построение текста и клавиатуры для бота.
 """
 import asyncio
 import json
@@ -8,7 +8,7 @@ import time
 import urllib.request
 import urllib.error
 
-from config import state, _executor, BOT_BROADCAST_DELAY, log
+from config import state, _executor, metrics, BOT_BROADCAST_DELAY, log
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -66,19 +66,6 @@ def _answer_callback(token: str, callback_query_id: str, text: str):
     })
 
 
-def _edit_message_reply_markup(token: str, chat_id: str, message_id: int, new_text: str):
-    _tg_request(token, 'editMessageReplyMarkup', {
-        'chat_id':      chat_id,
-        'message_id':   message_id,
-        'reply_markup': {'inline_keyboard': []},
-    })
-    _tg_request(token, 'sendMessage', {
-        'chat_id':             chat_id,
-        'text':                new_text,
-        'reply_to_message_id': message_id,
-    })
-
-
 def _send_alert(token: str, moderator_chat_id: str, message: str):
     if not token or not moderator_chat_id:
         return
@@ -87,48 +74,6 @@ def _send_alert(token: str, moderator_chat_id: str, message: str):
         'text':    message[:4096],
     })
 
-
-def _bot_request_raw(url: str, data: bytes, content_type: str,
-                     timeout: int = 30, label: str = '') -> dict:
-    req = urllib.request.Request(url, data=data, headers={'Content-Type': content_type})
-    for attempt in range(5):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                result = json.loads(resp.read().decode('utf-8'))
-                if not result.get('ok'):
-                    log.error(f'[{label}] Bot API не ок: {result.get("description")}')
-                return result
-        except urllib.error.HTTPError as e:
-            if e.code == 429:
-                retry_after = int(e.headers.get('Retry-After', 15))
-                log.warning(f'[{label}] Bot API 429 — жду {retry_after}s')
-                time.sleep(retry_after + 1)
-            else:
-                log.error(f'[{label}] Bot API HTTP {e.code}: {e}', exc_info=True)
-                return {}
-        except Exception as e:
-            log.error(f'[{label}] Bot API error: {e}', exc_info=True)
-            return {}
-    return {}
-
-
-def _build_multipart(fields: dict, files: dict) -> tuple[bytes, str]:
-    boundary = 'B' + str(int(time.time() * 1000))
-    parts = []
-    for name, value in fields.items():
-        parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
-            f'{value}'.encode('utf-8')
-        )
-    for name, (filename, data, mime) in files.items():
-        header = (
-            f'--{boundary}\r\n'
-            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
-            f'Content-Type: {mime}\r\n\r\n'
-        ).encode('utf-8')
-        parts.append(header + data)
-    body = b'\r\n'.join(parts) + f'\r\n--{boundary}--'.encode('utf-8')
-    return body, f'multipart/form-data; boundary={boundary}'
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Построение текста и клавиатуры для бота
@@ -217,78 +162,11 @@ def _send_text_to_subscriber(token: str, chat_id: int, text: str, keyboard: dict
     return f'error: [{code}] {desc}'
 
 
-def _send_photo_to_subscriber(token: str, chat_id: int, caption: str,
-                               photo: bytes, keyboard: dict) -> str:
-    """Отправляет одно фото с подписью одному подписчику."""
-    url = f'https://api.telegram.org/bot{token}/sendPhoto'
-    fields: dict = {
-        'chat_id':    str(chat_id),
-        'caption':    caption[:1024],
-        'parse_mode': 'HTML',
-    }
-    if keyboard:
-        fields['reply_markup'] = json.dumps(keyboard)
-    body, ct = _build_multipart(
-        fields=fields,
-        files={'photo': ('photo.jpg', photo, 'image/jpeg')},
-    )
-    result = _bot_request_raw(url, body, ct, timeout=30, label=f'sendPhoto→{chat_id}')
-    if result.get('ok'):
-        return 'ok'
-    code = result.get('error_code', 0)
-    desc = result.get('description', '')
-    if code in (403, 400) and any(
-        s in desc for s in ('blocked', 'deactivated', 'not found', 'kicked')
-    ):
-        return 'blocked'
-    return f'error: [{code}] {desc}'
-
-
-def _send_album_to_subscriber(token: str, chat_id: int, caption: str,
-                               photos: list[bytes], keyboard: dict) -> str:
-    """
-    Отправляет альбом (2–10 фото) одному подписчику.
-    Инлайн-кнопки прикрепляются к отдельному сообщению после альбома.
-    """
-    photos = photos[:10]
-    url = f'https://api.telegram.org/bot{token}/sendMediaGroup'
-    media_json = []
-    for i in range(len(photos)):
-        item: dict = {'type': 'photo', 'media': f'attach://p{i}'}
-        if i == 0:
-            item['caption']    = caption[:1024]
-            item['parse_mode'] = 'HTML'
-        media_json.append(item)
-    fields = {'chat_id': str(chat_id), 'media': json.dumps(media_json)}
-    files  = {f'p{i}': (f'p{i}.jpg', pb, 'image/jpeg') for i, pb in enumerate(photos)}
-    body, ct = _build_multipart(fields, files)
-    result = _bot_request_raw(url, body, ct, timeout=60, label=f'sendAlbum→{chat_id}')
-
-    if not result.get('ok'):
-        code = result.get('error_code', 0)
-        desc = result.get('description', '')
-        if code in (403, 400) and any(
-            s in desc for s in ('blocked', 'deactivated', 'not found', 'kicked')
-        ):
-            return 'blocked'
-        return f'error: [{code}] {desc}'
-
-    # Кнопки отдельным сообщением (sendMediaGroup не поддерживает reply_markup)
-    if keyboard:
-        _tg_request(token, 'sendMessage', {
-            'chat_id':      chat_id,
-            'text':         '🔗',
-            'reply_markup': keyboard,
-        }, timeout=10)
-
-    return 'ok'
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Рассылка всем подписчикам
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
+async def _broadcast_to_bot(post: dict, ss):
     """
     Рассылает пост всем подписчикам бота.
     Автоматически убирает заблокировавших из CRM.
@@ -321,24 +199,11 @@ async def _broadcast_to_bot(post: dict, photos: list[bytes], ss):
         if post_cities and not sub_cities:
             continue
         try:
-            if photos and len(photos) == 1:
-                status = await loop.run_in_executor(
-                    _executor,
-                    _send_photo_to_subscriber,
-                    token, chat_id, text, photos[0], keyboard,
-                )
-            elif photos and len(photos) > 1:
-                status = await loop.run_in_executor(
-                    _executor,
-                    _send_album_to_subscriber,
-                    token, chat_id, text, photos, keyboard,
-                )
-            else:
-                status = await loop.run_in_executor(
-                    _executor,
-                    _send_text_to_subscriber,
-                    token, chat_id, text, keyboard,
-                )
+            status = await loop.run_in_executor(
+                _executor,
+                _send_text_to_subscriber,
+                token, chat_id, text, keyboard,
+            )
 
             if status == 'ok':
                 sent += 1
