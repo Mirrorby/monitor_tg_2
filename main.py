@@ -210,107 +210,8 @@ async def main():
     log.info(f'Воркеры очереди: {config.PROCESS_WORKERS} запущено')
 
     # ══════════════════════════════════════════════════════════════════════
-    # Буфер альбомов и хендлеры
+    # Хендлеры
     # ══════════════════════════════════════════════════════════════════════
-
-    album_buffer: dict = {}
-
-    async def _flush_album(grouped_id: int, _acc: str, _client: TelegramClient):
-        entry = album_buffer.pop(grouped_id, None)
-        if not entry:
-            return
-        try:
-            msgs = sorted(entry['msgs'], key=lambda m: m.id)
-            first = msgs[0]
-            try:
-                raw_id = first.chat_id
-            except Exception:
-                raw_id = -(getattr(first.peer_id, 'channel_id', 0))
-            abs_id = abs(raw_id)
-
-            async with config._state_lock:
-                id_to_meta    = dict(state['id_to_meta'])
-                minus_words   = list(state['minus_words'])
-                scoring_rules = list(state['scoring_rules'])
-                min_length    = state['min_length']
-                mod_threshold = state['moderation_threshold']
-
-            meta = _meta_by_abs_id(id_to_meta, abs_id)
-            if meta is None:
-                log.info(f'[{_acc}][альбом] abs_id={abs_id} не в списке каналов — пропуск')
-                return
-
-            text = ''
-            text_entities = None
-            for m in msgs:
-                t = m.text or m.message or ''
-                if hasattr(m, 'caption') and m.caption:
-                    t = m.caption
-                if t.strip():
-                    text = t
-                    text_entities = m.entities
-                    break
-
-            html_text = _text_to_html(text, text_entities)
-            chat_name = meta.get('chat_name', str(abs_id))
-
-            minus_hit = _find_minus_word(text, minus_words)
-            if minus_hit:
-                log.info(f'[{_acc}][альбом минус "{minus_hit}"] {chat_name}')
-                return
-
-            if len(text) < min_length:
-                log.info(f'[{_acc}][альбом короткий {len(text)}<{min_length}] {chat_name}')
-                return
-
-            score = _calc_score(text, scoring_rules)
-            if score < mod_threshold:
-                log.info(f'[{_acc}][альбом скор:{score}<{mod_threshold}] {chat_name}')
-                return
-
-            try:
-                chat = await _client.get_entity(raw_id)
-            except Exception:
-                chat = None
-            link = _build_link(chat, first.id) if chat else f'https://t.me/c/{abs_id}/{first.id}'
-
-            author_name, author_link, user_id = _get_author_info(first)
-
-            async with config._state_lock:
-                excluded = set(state.get('excluded_accounts', set()))
-            if user_id and user_id in excluded:
-                log.info(f'[{_acc}][альбом исключён] user_id={user_id} {chat_name}')
-                return
-
-            post = {
-                'date':          first.date.replace(tzinfo=None),
-                'chat_name':     chat_name,
-                'author_name':   author_name,
-                'author_link':   author_link,
-                'user_id':       user_id,
-                'link':          link,
-                'text':          text,
-                'html_text':     html_text,
-                'score':         score,
-                'account':       _acc,
-                'src_chat_id':   raw_id,
-                'src_msg_id':    first.id,
-                'grouped_refs':  [(getattr(m, 'chat_id', None) or raw_id, m.id) for m in msgs],
-                'added_at':      time.time(),
-                'channel_city':  meta.get('city', ''),
-                'channel_theme': meta.get('theme', ''),
-            }
-            metrics['processed'] += 1
-
-            post_queue.put_nowait({'post': post, 'msgs': msgs, 'acc': _acc})
-            log.info(
-                f'[{_acc}][альбом→queue скор:{score}] {chat_name} '
-                f'| очередь: {post_queue.qsize()}'
-            )
-
-        except Exception as e:
-            metrics['errors'] += 1
-            log.error(f'_flush_album error grouped_id={grouped_id}: {e}', exc_info=True)
 
     for acc_label, client in clients.items():
 
@@ -347,26 +248,15 @@ async def main():
                 msg_age = time.time() - msg.date.timestamp()
                 log.info(f'[{_acc}][возраст] {chat_name} | {msg_age:.1f}с')
 
-                # ── Альбом ─────────────────────────────────────────────────
-                grouped_id = getattr(msg, 'grouped_id', None)
-                if grouped_id:
-                    if grouped_id not in album_buffer:
-                        handle = asyncio.get_event_loop().call_later(
-                            1.5, lambda gid=grouped_id: asyncio.ensure_future(
-                                _flush_album(gid, _acc, _client)
-                            )
-                        )
-                        album_buffer[grouped_id] = {
-                            'msgs': [], 'timer': handle,
-                            'acc': _acc, 'client': _client,
-                        }
-                    album_buffer[grouped_id]['msgs'].append(msg)
+                msg_age = time.time() - msg.date.timestamp()
+                log.info(f'[{_acc}][возраст] {chat_name} | {msg_age:.1f}с')
+
+                # ── Медиа и альбомы — пропускаем ──────────────────────────
+                if msg.media or getattr(msg, 'grouped_id', None):
                     return
 
-                # ── Одиночное сообщение ────────────────────────────────────
+                # ── Одиночное текстовое сообщение ─────────────────────────
                 text = msg.text or getattr(msg, 'message', '') or ''
-                if hasattr(msg, 'caption') and msg.caption:
-                    text = msg.caption
                 text = re.sub(r'[^\S\n]+', ' ', text).strip()
                 html_text = _text_to_html(text, msg.entities)
 
@@ -442,7 +332,7 @@ async def main():
     log.info(
         f'Слушаю события. '
         f'Настройки обновляются каждые {config.SETTINGS_RELOAD_SEC}с. '
-        f'Bot polling: /start /stop + модерация. '
+        f'Bot polling: /start /stop. '
         f'Рассылка в бот: {len(state["bot_subscribers"])} подписчиков. '
         f'Воркеры: {config.PROCESS_WORKERS}.'
     )
