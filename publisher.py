@@ -1,8 +1,7 @@
 """
-Публикация постов: скачивание фото, отправка в канал, основная логика обработки.
+Публикация постов: основная логика обработки и отправки подписчикам.
 """
 import asyncio
-import io
 
 from telethon import TelegramClient
 
@@ -23,50 +22,10 @@ from utils import _get_sender_bio
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Скачивание фото из Telegram
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _is_image_doc(msg) -> bool:
-    doc = getattr(msg, 'document', None)
-    if not doc:
-        return False
-    mime = getattr(doc, 'mime_type', '') or ''
-    return mime.startswith('image/')
-
-
-async def _download_photos(client: TelegramClient, messages: list) -> list[bytes]:
-    photos = []
-    for m in messages:
-        media = m.photo or (m.document if _is_image_doc(m) else None)
-        if not media:
-            continue
-        try:
-            buf = io.BytesIO()
-            await asyncio.wait_for(client.download_media(m, file=buf), timeout=30)
-            photos.append(buf.getvalue())
-        except asyncio.TimeoutError:
-            log.warning(f'download_media timeout msg_id={m.id}')
-        except Exception as e:
-            log.warning(f'download_media error msg_id={m.id}: {e}', exc_info=True)
-    return photos
-
-
-async def _fetch_messages_by_refs(client: TelegramClient, refs: list[tuple]) -> list:
-    msgs = []
-    for chat_id, msg_id in refs:
-        try:
-            msg = await client.get_messages(chat_id, ids=msg_id)
-            if msg:
-                msgs.append(msg)
-        except Exception as e:
-            log.warning(f'Не удалось загрузить сообщение {chat_id}/{msg_id}: {e}', exc_info=True)
-    return msgs
-
-# ══════════════════════════════════════════════════════════════════════════════
 # Финальная публикация
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _do_publish(post, client, ss, acc, ai_decision, photos=None):
+async def _do_publish(post, client, ss, acc, ai_decision):
     user_id = post.get('user_id', 0)
     async with config._state_lock:
         realtors = set(state.get('realtors', set()))
@@ -76,7 +35,7 @@ async def _do_publish(post, client, ss, acc, ai_decision, photos=None):
     post['ai_decision'] = ai_decision
     fp = _post_fingerprint(post['text'], post['author_name'])
 
-    await _broadcast_to_bot(post, photos or [], ss)
+    await _broadcast_to_bot(post, ss)
 
     published_fingerprints.append(fp)
     await _safe_sheets_retry(_write_post, ss, post)
@@ -86,7 +45,8 @@ async def _do_publish(post, client, ss, acc, ai_decision, photos=None):
         f'[✅ AI:{ai_decision} acc:{acc}] {post["chat_name"]} → {post["link"]} '
         f'| бот: {len(state["bot_subscribers"])} подписчиков'
     )
-    
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Основная функция обработки поста
 # ══════════════════════════════════════════════════════════════════════════════
@@ -94,7 +54,7 @@ async def _do_publish(post, client, ss, acc, ai_decision, photos=None):
 async def _process_and_publish(
     post: dict,
     client: TelegramClient,
-    msgs_for_photos: list,
+    msgs_for_bio: list,
     ss,
     acc: str,
 ):
@@ -120,7 +80,7 @@ async def _process_and_publish(
     # 3. Bio автора — с жёстким таймаутом чтобы не тормозить обработку
     sender_bio = ''
     try:
-        source_msg = msgs_for_photos[0] if msgs_for_photos else None
+        source_msg = msgs_for_bio[0] if msgs_for_bio else None
         if source_msg:
             sender_bio = await asyncio.wait_for(
                 _get_sender_bio(client, source_msg), timeout=3.0
@@ -161,14 +121,11 @@ async def _process_and_publish(
         await _safe_sheets_retry(_write_ai_rejected, ss, post, ai_decision)
         return
 
-    # 6. Скачиваем фото
-    photos = await _download_photos(client, msgs_for_photos) if msgs_for_photos else []
-
-    # 7. approve_private / approve_agent
+    # 6. approve_private / approve_agent
     if ai_decision in ('approve_private', 'approve_agent'):
-        await _do_publish(post, client, ss, acc, ai_decision, photos or None)
+        await _do_publish(post, client, ss, acc, ai_decision)
         return
 
     # Неизвестный ответ AI → approve_private
     log.warning(f'[{acc}][AI неизвестный ответ: {ai_decision}] → approve_private')
-    await _do_publish(post, client, ss, acc, 'approve_private', photos or None)
+    await _do_publish(post, client, ss, acc, 'approve_private')
