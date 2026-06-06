@@ -233,7 +233,7 @@ async def _broadcast_to_bot(post: dict, ss):
         for cid, reason in error_ids:
             log.warning(f'[бот рассылка ⚠️] chat_id={cid} — {reason}')
 
-   if blocked_ids:
+    if blocked_ids:
         async with _state_lock:
             token_notify = state['tg_token']
             moderator = state['moderator_chat_id']
