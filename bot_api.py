@@ -233,9 +233,42 @@ async def _broadcast_to_bot(post: dict, ss):
         for cid, reason in error_ids:
             log.warning(f'[бот рассылка ⚠️] chat_id={cid} — {reason}')
 
-    if blocked_ids:
+   if blocked_ids:
         async with _state_lock:
+            token_notify = state['tg_token']
+            moderator = state['moderator_chat_id']
+            blocked_info = {
+                cid: dict(state['bot_subscribers'].get(cid, {}))
+                for cid in blocked_ids
+            }
             for cid in blocked_ids:
                 state['bot_subscribers'].pop(cid, None)
+    
+        from sheets import _add_crm_comment
         for cid in blocked_ids:
+            sub = blocked_info.get(cid, {})
+            uname = sub.get('username', '') or str(cid)
+            city = sub.get('city', '—')
+    
+            # Отписка в CRM + комментарий
             await _safe_sheets_retry(_remove_bot_subscriber, ss, cid)
+            await loop.run_in_executor(
+                _executor, _add_crm_comment, ss, cid,
+                f'🚫 заблокировал бота'
+            )
+    
+            # Уведомление модератора
+            if token_notify and moderator:
+                notify = (
+                    f'🚫 <b>Пользователь заблокировал бота</b>\n\n'
+                    f'👤 @{uname}\n'
+                    f'🆔 Chat ID: <code>{cid}</code>\n'
+                    f'📍 Город: {city}'
+                )
+                await loop.run_in_executor(
+                    _executor, _tg_request, token_notify, 'sendMessage', {
+                        'chat_id': moderator,
+                        'text': notify,
+                        'parse_mode': 'HTML',
+                    }
+                )
