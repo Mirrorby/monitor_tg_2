@@ -16,6 +16,7 @@ from sheets import (
     _read_realtors_raw, _read_channels, _read_bot_subscribers,
     _write_post, _add_realtor_to_sheet,
     _parse_excluded_accounts, _expire_crm_subscriptions,
+    _add_crm_comment,
 )
 from sheets import _resolve_realtors
 from channels import _update_watched_chats
@@ -295,8 +296,11 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
             }
         )
 
+    await _safe_sheets(_add_crm_comment, ss, chat_id,
+                   f'/start — @{username} подключился к боту')
+
     async with config._state_lock:
-        state['bot_subscribers'][chat_id] = {'city': '', 'theme': ''}
+        state['bot_subscribers'][chat_id] = {'city': '', 'theme': '', 'username': username}
 
     await loop.run_in_executor(
         _executor, _tg_request, token, 'sendMessage', {
@@ -341,6 +345,7 @@ async def _handle_stop(loop, token: str, chat_id: int, ss):
             async with config._state_lock:
                 state['bot_subscribers'].pop(chat_id, None)
             log.info(f'[бот] Отписался: chat_id={chat_id}')
+        await _safe_sheets(_add_crm_comment, ss, chat_id, '/stop — пользователь отписался')
         await loop.run_in_executor(
             _executor, _tg_request, token, 'sendMessage', {
                 'chat_id': chat_id,
