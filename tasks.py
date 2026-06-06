@@ -21,7 +21,7 @@ from sheets import (
 from sheets import _resolve_realtors
 from channels import _update_watched_chats
 from bot_api import (
-    _tg_request, _get_updates, _answer_callback, _edit_message_reply_markup,
+    _tg_request, _get_updates,
     _broadcast_to_bot,
 )
 from publisher import _publish_to_channel
