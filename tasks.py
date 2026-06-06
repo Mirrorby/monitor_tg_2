@@ -14,7 +14,7 @@ from sheets import (
     _safe_sheets, _safe_sheets_retry, _safe_sheets_result,
     _read_settings, _read_scoring_rules, _read_minus_words,
     _read_realtors_raw, _read_channels, _read_bot_subscribers,
-    _write_post, _update_rejected_status, _add_realtor_to_sheet,
+    _write_post, _add_realtor_to_sheet,
     _parse_excluded_accounts, _expire_crm_subscriptions,
     _add_crm_comment,
 )
