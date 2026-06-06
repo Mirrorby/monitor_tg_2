@@ -382,7 +382,7 @@ def _remove_bot_subscriber(ss, chat_id: int):
         return False
 
 def _set_subscriber_city(ss, chat_id: int, city: str) -> bool:
-    """Записывает выбранный город в CRM колонку P (индекс 16)."""
+    """Записывает выбранный город (P) и тему 'Арендаторы' (Q) в CRM."""
     try:
         ws   = ss.worksheet('CRM')
         rows = ws.get_all_values()
@@ -390,13 +390,17 @@ def _set_subscriber_city(ss, chat_id: int, city: str) -> bool:
             if not row:
                 continue
             if row[0].strip() == str(chat_id):
-                ws.update(values=[[city]], range_name=f'P{i}')
-                log.info(f'[CRM] chat_id={chat_id} → город: {city}')
+                cells = [
+                    gspread.Cell(i, 16, city),
+                    gspread.Cell(i, 17, 'Арендаторы'),
+                ]
+                ws.update_cells(cells, value_input_option='USER_ENTERED')
+                log.info(f'[CRM] chat_id={chat_id} → город: {city}, тема: Арендаторы')
                 return True
         log.warning(f'[CRM] chat_id={chat_id} не найден для записи города')
         return False
     except Exception as e:
-        log.error(f'Ошибка записи города в CRM: {e}', exc_info=True)
+        log.error(f'Ошибка записи города/темы в CRM: {e}', exc_info=True)
         return False
         
 def _expire_crm_subscriptions(ss) -> list[int]:
