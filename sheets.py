@@ -284,7 +284,8 @@ def _read_bot_subscribers(ss) -> dict:
                 continue
             if not city:
                 continue  # без города — не получает ничего
-            result[int(chat_id_raw)] = {'city': city, 'theme': theme}
+            uname = row[1].strip().lstrip('@') if len(row) > 1 else ''
+            result[int(chat_id_raw)] = {'city': city, 'theme': theme, 'username': uname}
         log.info(f'Активных подписчиков загружено из CRM: {len(result)}')
         return result
     except Exception as e:
@@ -574,6 +575,29 @@ def _write_entity_cache(ss):
         log.info(f'Кеш записан: {len(rows) - 1} каналов')
     except Exception as e:
         log.error(f'Ошибка записи кеша: {e}', exc_info=True)
+
+def _add_crm_comment(ss, chat_id: int, comment: str):
+    try:
+        ws = ss.worksheet('CRM')
+        rows = ws.get_all_values()
+        now_str = _local_now().strftime('%Y-%m-%d %H:%M')
+        for i, row in enumerate(rows[5:], start=6):
+            if not row or not row[0].strip():
+                continue
+            if row[0].strip() == str(chat_id):
+                # Колонка R = индекс 18 (0-based), номер 18 в gspread (1-based)
+                existing = row[17].strip() if len(row) > 17 else ''
+                new_comment = f'{now_str} — {comment}'
+                if existing:
+                    new_comment = existing + '\n' + new_comment
+                ws.update(values=[[new_comment]], range_name=f'R{i}')
+                log.info(f'[CRM] Комментарий для chat_id={chat_id}: {comment}')
+                return True
+        log.warning(f'[CRM] chat_id={chat_id} не найден для записи комментария')
+        return False
+    except Exception as e:
+        log.error(f'Ошибка записи комментария в CRM: {e}', exc_info=True)
+        return False
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Fingerprints
