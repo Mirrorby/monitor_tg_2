@@ -626,3 +626,26 @@ def _load_ai_rejected_fingerprints(ss) -> set:
     except Exception as e:
         log.error(f'Ошибка загрузки fingerprints (Отклонено ИИ): {e}', exc_info=True)
         return set()
+
+def _add_crm_comment(ss, chat_id: int, comment: str):
+    try:
+        ws = ss.worksheet('CRM')
+        rows = ws.get_all_values()
+        now_str = _local_now().strftime('%Y-%m-%d %H:%M')
+        for i, row in enumerate(rows[5:], start=6):
+            if not row or not row[0].strip():
+                continue
+            if row[0].strip() == str(chat_id):
+                # Колонка R = индекс 18 (0-based), номер 18 в gspread (1-based)
+                existing = row[17].strip() if len(row) > 17 else ''
+                new_comment = f'{now_str} — {comment}'
+                if existing:
+                    new_comment = existing + '\n' + new_comment
+                ws.update(values=[[new_comment]], range_name=f'R{i}')
+                log.info(f'[CRM] Комментарий для chat_id={chat_id}: {comment}')
+                return True
+        log.warning(f'[CRM] chat_id={chat_id} не найден для записи комментария')
+        return False
+    except Exception as e:
+        log.error(f'Ошибка записи комментария в CRM: {e}', exc_info=True)
+        return False
