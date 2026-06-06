@@ -375,6 +375,27 @@ async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
 
     await _safe_sheets_retry(_set_subscriber_city, ss, chat_id, city)
 
+    # ── уведомление модератора ─────────────────────────────────────────────
+    async with config._state_lock:
+        moderator = state['moderator_chat_id']
+
+    username = cq.get('from', {}).get('username', '')
+    if token and moderator:
+        await loop.run_in_executor(
+            _executor, _tg_request, token, 'sendMessage', {
+                'chat_id':    moderator,
+                'text': (
+                    f'📍 Выбран город\n\n'
+                    f'👤 Username: @{username}\n'
+                    f'🆔 Chat ID: <code>{chat_id}</code>\n'
+                    f'🏙 Город: {city}\n'
+                    f'📋 Тема: Арендаторы'
+                ),
+                'parse_mode': 'HTML',
+            }
+        )
+    # ──────────────────────────────────────────────────────────────────────
+
     async with config._state_lock:
         if chat_id in state['bot_subscribers']:
             state['bot_subscribers'][chat_id]['city'] = city
