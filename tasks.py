@@ -278,18 +278,19 @@ async def _handle_start(loop, token: str, moderator: str, chat_id: int, username
 
     trial_end = added.get('trial_end', '') if isinstance(added, dict) else ''
 
-    if isinstance(added, dict) and added.get('is_new') and token and moderator:
+    if token and moderator:
+        is_new = isinstance(added, dict) and added.get('is_new')
+        tag = '🆕 Новый подписчик' if is_new else '🔄 Повторный /start'
         notify_text = (
-            f'🆕 <b>Новый подписчик без записи в CRM</b>\n\n'
+            f'{tag}\n\n'
             f'👤 Username: @{username}\n'
             f'🆔 Chat ID: <code>{chat_id}</code>\n'
-            f'📅 Триал до: {trial_end}\n\n'
-            f'Запись создана автоматически.'
+            f'📅 Триал до: {trial_end}\n'
         )
         await loop.run_in_executor(
             _executor, _tg_request, token, 'sendMessage', {
-                'chat_id':    moderator,
-                'text':       notify_text,
+                'chat_id': moderator,
+                'text': notify_text,
                 'parse_mode': 'HTML',
             }
         )
