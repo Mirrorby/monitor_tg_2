@@ -474,10 +474,6 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
                     f'{post["chat_name"]} → {post["link"]}'
                 )
                 await _safe_sheets_retry(_write_post, ss, post)
-                await _safe_sheets(
-                    _update_rejected_status, ss,
-                    post.get('bot_message_id', 0), f'одобрено ({label})'
-                )
                 await loop.run_in_executor(
                     _executor, _answer_callback, token, cq_id,
                     f'✅ Опубликовано ({label})!'
@@ -502,9 +498,6 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
     elif action == 'skip':
         log.info(f'[модерация ❌ пропущено] {post["chat_name"]} → {post["link"]}')
         post.pop('_photos', None)
-        await _safe_sheets(
-            _update_rejected_status, ss, post.get('bot_message_id', 0), 'пропущено'
-        )
         await loop.run_in_executor(
             _executor, _answer_callback, token, cq_id, '❌ Пост пропущен'
         )
