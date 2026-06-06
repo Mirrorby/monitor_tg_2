@@ -378,8 +378,9 @@ async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
     async with config._state_lock:
         if chat_id in state['bot_subscribers']:
             state['bot_subscribers'][chat_id]['city'] = city
+            state['bot_subscribers'][chat_id]['theme'] = 'Арендаторы'
         else:
-            state['bot_subscribers'][chat_id] = {'city': city, 'theme': ''}
+            state['bot_subscribers'][chat_id] = {'city': city, 'theme': 'Арендаторы'}
 
     log.info(f'[бот] chat_id={chat_id} выбрал город: {city}')
 
