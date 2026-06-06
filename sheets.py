@@ -284,7 +284,8 @@ def _read_bot_subscribers(ss) -> dict:
                 continue
             if not city:
                 continue  # без города — не получает ничего
-            result[int(chat_id_raw)] = {'city': city, 'theme': theme}
+            uname = row[1].strip().lstrip('@') if len(row) > 1 else ''
+            result[int(chat_id_raw)] = {'city': city, 'theme': theme, 'username': uname}
         log.info(f'Активных подписчиков загружено из CRM: {len(result)}')
         return result
     except Exception as e:
