@@ -8,7 +8,7 @@ import time
 import config
 from config import (
     SETTINGS_RELOAD_SEC, state, _executor, metrics,
-    published_fingerprints, pending_moderation, log,
+    published_fingerprints, log,
 )
 from sheets import (
     _safe_sheets, _safe_sheets_retry, _safe_sheets_result,
@@ -22,7 +22,7 @@ from sheets import _resolve_realtors
 from channels import _update_watched_chats
 from bot_api import (
     _tg_request, _get_updates, _answer_callback, _edit_message_reply_markup,
-    _broadcast_to_bot, _send_moderation_card,
+    _broadcast_to_bot,
 )
 from publisher import _publish_to_channel
 from sheets import _post_fingerprint
@@ -131,10 +131,10 @@ async def _cleanup_pending_loop():
         await asyncio.sleep(3600)
         try:
             cutoff = time.time() - 86400
-            stale = [k for k, v in pending_moderation.items()
+            stale = [k for k, v in config.pending_moderation.items()
                      if v.get('added_at', 0) < cutoff]
             for k in stale:
-                pending_moderation.pop(k, None)
+                config.pending_moderation.pop(k, None)
             if stale:
                 log.info(f'Cleanup: удалено {len(stale)} устаревших pending-постов')
         except Exception as e:
@@ -156,7 +156,7 @@ async def _heartbeat_loop():
             f'bot_sent:{metrics["bot_sent"]} '
             f'bot_blocked:{metrics["bot_blocked"]} '
             f'subscribers:{len(state["bot_subscribers"])} '
-            f'pending_mod:{len(pending_moderation)}'
+            f'pending_mod:{len(config.pending_moderation)}'
         )
 
 
@@ -403,7 +403,7 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
 
     action, src_chat_id_str, src_msg_id_str = parts
     pend_key = f'{src_chat_id_str}:{src_msg_id_str}'
-    post = pending_moderation.get(pend_key)
+    post = config.pending_moderation.get(pend_key)
 
     if not post:
         await loop.run_in_executor(
@@ -443,7 +443,7 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
                         _executor, _edit_message_reply_markup,
                         token, moderator, msg_id, '⛔ Дубль — публикация отменена'
                     )
-                    pending_moderation.pop(pend_key, None)
+                    config.pending_moderation.pop(pend_key, None)
                     return
 
                 photos = post.pop('_photos', []) or []
@@ -513,7 +513,7 @@ async def _handle_callback(loop, cq: dict, token: str, moderator: str, clients: 
             token, moderator, msg_id,
             f'❌ Пропущено модератором {from_id}'
         )
-        pending_moderation.pop(pend_key, None)
+        config.pending_moderation.pop(pend_key, None)
 
 
 async def _handle_city_choice(loop, cq: dict, token: str, city: str, ss):
