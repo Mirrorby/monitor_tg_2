@@ -191,6 +191,7 @@ async def _bot_polling_loop(clients: dict, ss):
             token     = state['tg_token']
             moderator = state['moderator_chat_id']
 
+
         if not token:
             await asyncio.sleep(5)
             continue

@@ -237,13 +237,16 @@ async def main():
                 meta = _meta_by_abs_id(id_to_meta, abs_id)
                 if meta is None:
                     return
-
+                
                 dedup_key = (raw_id, msg.id)
                 if dedup_key in seen_ids:
                     return
                 seen_ids.append(dedup_key)
-
+                
                 chat_name = meta.get('chat_name', str(abs_id))
+                
+                msg_age = time.time() - msg.date.timestamp()
+                log.info(f'[{_acc}][возраст] {chat_name} | {msg_age:.1f}с')
 
                 msg_age = time.time() - msg.date.timestamp()
                 log.info(f'[{_acc}][возраст] {chat_name} | {msg_age:.1f}с')
