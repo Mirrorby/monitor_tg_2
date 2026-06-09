@@ -15,7 +15,7 @@ from sheets import (
     _read_realtors_raw, _read_channels, _read_bot_subscribers,
     _add_realtor_to_sheet,
     _parse_excluded_accounts, _expire_crm_subscriptions,
-    _add_crm_comment,
+    _add_crm_comment, _mark_channel_delayed,
 )
 from sheets import _resolve_realtors
 from channels import _update_watched_chats
@@ -82,6 +82,14 @@ async def _settings_reload_loop(clients: dict, ss):
                     state['bot_subscribers'] = new_subscribers
             if new_channels is not None:
                 await _update_watched_chats(clients, new_channels, ss)
+
+            async with config._state_lock:
+                delayed = config.state['delayed_channels'].copy()
+                config.state['delayed_channels'].clear()
+            
+            if delayed:
+                log.info(f'[задержки] Фиксируем в таблице: {delayed}')
+                await _safe_sheets_retry(_mark_channel_delayed, ss, delayed)
 
             # Проверка истёкших подписок
             expired_ids = await _safe_sheets_result(_expire_crm_subscriptions, ss)
