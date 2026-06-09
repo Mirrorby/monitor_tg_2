@@ -248,6 +248,11 @@ async def main():
                 msg_age = time.time() - msg.date.timestamp()
                 log.info(f'[{_acc}][возраст] {chat_name} | {msg_age:.1f}с')
 
+                if msg_age > 180:
+                    log.warning(f'[{_acc}][задержка {msg_age:.0f}с] {chat_name}')
+                    async with config._state_lock:
+                        config.state['delayed_channels'].add(chat_name)
+
                 # ── Медиа и альбомы — пропускаем ──────────────────────────
                 if msg.media or getattr(msg, 'grouped_id', None):
                     return
