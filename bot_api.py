@@ -57,15 +57,6 @@ def _get_updates(token: str, offset: int, timeout: int = 30) -> list:
         return []
     return result.get('result', [])
 
-
-def _answer_callback(token: str, callback_query_id: str, text: str):
-    _tg_request(token, 'answerCallbackQuery', {
-        'callback_query_id': callback_query_id,
-        'text': text,
-        'show_alert': False,
-    })
-
-
 def _send_alert(token: str, moderator_chat_id: str, message: str):
     if not token or not moderator_chat_id:
         return

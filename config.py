@@ -55,6 +55,7 @@ state = {
     'realtors':             set(),
     'bot_subscribers':      {},
     'channel_city_map':     {},
+    'delayed_channels':     set(),
 }
 
 # ── Очереди дедупликации ───────────────────────────────────────────────────────
@@ -64,9 +65,6 @@ ai_rejected_fingerprints: deque = deque(maxlen=10000)
 
 # ── Очередь постов для воркеров (инициализируется в main) ──────────────────────
 post_queue: asyncio.Queue = None
-
-# Флаг: алерт о переполнении уже отправлен (чтобы не спамить)
-queue_alert_sent: bool = False
 
 # ── Пул потоков и блокировки (инициализируются в main) ─────────────────────────
 _executor      = ThreadPoolExecutor(max_workers=EXECUTOR_WORKERS)
@@ -81,53 +79,3 @@ metrics = {
     'bot_sent':    0,
     'bot_blocked': 0,
 }
-
-# ── Telegram-алерты (вызываются через run_in_executor) ────────────────────────
-import json
-import urllib.request
-
-def _tg_request_alert(token: str, chat_id: str, qsize: int):
-    """Синхронный алерт — вызывается через run_in_executor."""
-    url = f'https://api.telegram.org/bot{token}/sendMessage'
-    payload = json.dumps({
-        'chat_id': chat_id,
-        'text': (
-            f'⚠️ <b>Очередь постов переполнена</b>\n\n'
-            f'В очереди накопилось <b>{qsize}</b> постов.\n'
-            f'Возможна задержка публикаций или проблемы с Gemini API.\n\n'
-            f'Проверьте логи.'
-        ),
-        'parse_mode': 'HTML',
-    }).encode('utf-8')
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={'Content-Type': 'application/json'},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception as e:
-        log.warning(f'[alert] не удалось отправить алерт: {e}')
-
-
-def _tg_request_alert_ok(token: str, chat_id: str, qsize: int):
-    """Синхронное уведомление о нормализации очереди."""
-    url = f'https://api.telegram.org/bot{token}/sendMessage'
-    payload = json.dumps({
-        'chat_id': chat_id,
-        'text': (
-            f'✅ <b>Очередь нормализовалась</b>\n\n'
-            f'Текущий размер: <b>{qsize}</b>.\n'
-            f'Публикации идут в штатном режиме.'
-        ),
-        'parse_mode': 'HTML',
-    }).encode('utf-8')
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={'Content-Type': 'application/json'},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception as e:
-        log.warning(f'[alert] не удалось отправить алерт-ок: {e}')

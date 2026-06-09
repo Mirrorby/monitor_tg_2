@@ -654,3 +654,32 @@ def _load_ai_rejected_fingerprints(ss) -> set:
     except Exception as e:
         log.error(f'Ошибка загрузки fingerprints (Отклонено ИИ): {e}', exc_info=True)
         return set()
+
+def _mark_channel_delayed(ss, channel_names: set):
+    """Ставит статус 'Задержка' в колонку D листа Каналы для указанных каналов."""
+    if not channel_names:
+        return
+    try:
+        ws   = ss.worksheet('Каналы')
+        rows = ws.get_all_values()
+        cells = []
+        for i, row in enumerate(rows[1:], start=2):
+            if not row:
+                continue
+            # Имя канала может быть в колонке A (username) или
+            # мы сверяем по chat_name из кеша — ищем по username → chat_name
+            username = row[0].strip()
+            name_in_cache = ''
+            for uname, meta in state.get('username_to_meta', {}).items():
+                if _extract_username(username) == uname:
+                    name_in_cache = meta.get('chat_name', '')
+                    break
+            if name_in_cache in channel_names:
+                existing_status = row[3].strip() if len(row) > 3 else ''
+                if existing_status != 'Задержка':
+                    cells.append(gspread.Cell(i, 4, 'Задержка'))
+        if cells:
+            ws.update_cells(cells, value_input_option='USER_ENTERED')
+            log.info(f'[каналы] Статус Задержка проставлен: {len(cells)} каналов')
+    except Exception as e:
+        log.error(f'Ошибка записи статуса задержки: {e}', exc_info=True)
