@@ -248,9 +248,6 @@ async def main():
                 msg_age = time.time() - msg.date.timestamp()
                 log.info(f'[{_acc}][возраст] {chat_name} | {msg_age:.1f}с')
 
-                msg_age = time.time() - msg.date.timestamp()
-                log.info(f'[{_acc}][возраст] {chat_name} | {msg_age:.1f}с')
-
                 # ── Медиа и альбомы — пропускаем ──────────────────────────
                 if msg.media or getattr(msg, 'grouped_id', None):
                     return
