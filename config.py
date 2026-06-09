@@ -55,6 +55,7 @@ state = {
     'realtors':             set(),
     'bot_subscribers':      {},
     'channel_city_map':     {},
+    'delayed_channels':     set(),
 }
 
 # ── Очереди дедупликации ───────────────────────────────────────────────────────
