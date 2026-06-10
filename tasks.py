@@ -15,7 +15,7 @@ from sheets import (
     _read_realtors_raw, _read_channels, _read_bot_subscribers,
     _add_realtor_to_sheet,
     _parse_excluded_accounts, _expire_crm_subscriptions,
-    _add_crm_comment, _mark_channel_delayed,
+    _add_crm_comment, _mark_channel_delayed, _mark_channel_unavailable,
 )
 from sheets import _resolve_realtors
 from channels import _update_watched_chats
