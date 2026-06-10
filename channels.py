@@ -8,7 +8,9 @@ from telethon.errors import ChannelPrivateError, FloodWaitError, UsernameInvalid
 from telethon.tl.types import PeerChannel
 from config import state, _executor, log
 import config
-from sheets import _safe_sheets, _write_entity_cache, _write_log
+from sheets import (
+    _safe_sheets, _safe_sheets_retry, _write_entity_cache,
+    _write_log, _mark_channel_unavailable,
 from bot_api import _send_alert
 from utils import _all_id_variants, _extract_username, _normalize_chat_id
 
