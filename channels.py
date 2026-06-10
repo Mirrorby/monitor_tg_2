@@ -15,9 +15,8 @@ from utils import _all_id_variants, _extract_username, _normalize_chat_id
 
 async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
     errors = {}
+    final_status = 'Недоступен'
 
-    # Если передан числовой ID вида -1001761990621 или просто 1761990621 —
-    # используем PeerChannel, иначе Telethon не найдёт закрытую группу
     m = re.match(r'^-?100(\d+)$', str(username))
     if m:
         peer = PeerChannel(int(m.group(1)))
@@ -31,6 +30,7 @@ async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
             chat_name = getattr(entity, 'title', None) or username
             log.info(f'Резолв [{acc_name}]: {username} → {eid} ({chat_name})')
             return {'entity_id': eid, 'chat_name': chat_name, 'username': username}
+
         except FloodWaitError as e:
             log.warning(f'[{acc_name}] FloodWait при резолве {username}: жду {e.seconds}s')
             await asyncio.sleep(e.seconds + 2)
@@ -39,26 +39,49 @@ async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
                 eid       = _normalize_chat_id(abs(entity.id))
                 chat_name = getattr(entity, 'title', None) or username
                 return {'entity_id': eid, 'chat_name': chat_name, 'username': username}
+            except FloodWaitError:
+                errors[acc_name] = f'FloodWait повторный'
+                final_status = 'Флуд (временно)'
+            except ChannelPrivateError:
+                errors[acc_name] = 'Канал приватный / аккаунт кикнут'
+                final_status = 'Аккаунт кикнут'
+            except (UsernameNotOccupiedError, UsernameInvalidError) as e2:
+                errors[acc_name] = str(e2)
+                final_status = 'Username изменился'
             except Exception as e2:
                 errors[acc_name] = str(e2)
-        except (ChannelPrivateError, UsernameNotOccupiedError, UsernameInvalidError) as e:
+                final_status = 'Ошибка сети'
+
+        except ChannelPrivateError as e:
             errors[acc_name] = str(e)
-            log.warning(f'[{acc_name}] Недоступен {username}: {e}')
+            final_status = 'Аккаунт кикнут'
+            log.warning(f'[{acc_name}] Канал приватный / кикнут {username}: {e}')
+
+        except (UsernameNotOccupiedError, UsernameInvalidError) as e:
+            errors[acc_name] = str(e)
+            final_status = 'Username изменился'
+            log.warning(f'[{acc_name}] Username не найден {username}: {e}')
+
         except Exception as e:
             errors[acc_name] = str(e)
+            final_status = 'Ошибка сети'
             log.error(f'[{acc_name}] Ошибка резолва {username}: {e}', exc_info=True)
+
         await asyncio.sleep(0.5)
 
-    msg = (f'🚫 Канал недоступен: @{username}\n'
-           + '\n'.join(f'{k}: {v}' for k, v in errors.items()))
+    # Все аккаунты не смогли резолвнуть — пишем статус и алертим
+    msg = (
+        f'🚫 Канал недоступен ({final_status}): {username}\n' +
+        '\n'.join(f'{k}: {v}' for k, v in errors.items())
+    )
     log.error(msg)
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(_executor, _send_alert,
                                state['tg_token'], state['moderator_chat_id'], msg)
     await _safe_sheets(_write_log, ss, 'ERROR', msg)
+    await _safe_sheets_retry(_mark_channel_unavailable, ss, username, final_status)
     return None
-
-
+    
 async def _update_watched_chats(clients: dict, channels: list, ss):
     new_ids     = set()
     new_id_meta = {}
