@@ -10,7 +10,7 @@ from config import state, _executor, log
 import config
 from sheets import _safe_sheets, _write_entity_cache, _write_log
 from bot_api import _send_alert
-from utils import _all_id_variants, _extract_username
+from utils import _all_id_variants, _extract_username, _normalize_chat_id
 
 
 async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
@@ -27,7 +27,7 @@ async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
     for acc_name, client in clients.items():
         try:
             entity    = await client.get_entity(peer)
-            eid       = abs(entity.id)
+            eid       = _normalize_chat_id(abs(entity.id))
             chat_name = getattr(entity, 'title', None) or username
             log.info(f'Резолв [{acc_name}]: {username} → {eid} ({chat_name})')
             return {'entity_id': eid, 'chat_name': chat_name, 'username': username}
@@ -36,7 +36,7 @@ async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
             await asyncio.sleep(e.seconds + 2)
             try:
                 entity    = await client.get_entity(peer)
-                eid       = abs(entity.id)
+                eid       = _normalize_chat_id(abs(entity.id))
                 chat_name = getattr(entity, 'title', None) or username
                 return {'entity_id': eid, 'chat_name': chat_name, 'username': username}
             except Exception as e2:
