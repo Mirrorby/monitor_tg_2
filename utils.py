@@ -27,36 +27,20 @@ def _extract_username(raw: str):
         return raw
     return None
 
+def _normalize_chat_id(raw_id: int) -> int:
+    """Всегда возвращает короткий вариант ID без префикса 100."""
+    eid = abs(raw_id)
+    s = str(eid)
+    if s.startswith('100') and len(s) > 12:
+        return int(s[3:])
+    return eid
 
 def _all_id_variants(entity_id: int) -> list:
-    eid = abs(entity_id)
-    variants: set[int] = {eid}
-    s = str(eid)
-    try:
-        if s.startswith('100') and len(s) > 12:
-            short = int(s[3:])
-            if short > 0:
-                variants.add(short)
-        else:
-            variants.add(int('100' + s))
-    except ValueError:
-        pass
-    return list(variants)
+    return [_normalize_chat_id(entity_id)]
 
 
 def _meta_by_abs_id(id_to_meta: dict, abs_id: int):
-    meta = id_to_meta.get(abs_id)
-    if meta is not None:
-        return meta
-    s = str(abs_id)
-    try:
-        if s.startswith('100') and len(s) > 12:
-            alt = int(s[3:])
-        else:
-            alt = int('100' + s)
-        return id_to_meta.get(alt)
-    except ValueError:
-        return None
+    return id_to_meta.get(_normalize_chat_id(abs_id))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
