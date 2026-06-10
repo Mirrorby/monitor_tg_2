@@ -655,8 +655,42 @@ def _load_ai_rejected_fingerprints(ss) -> set:
         log.error(f'Ошибка загрузки fingerprints (Отклонено ИИ): {e}', exc_info=True)
         return set()
 
+_STATUS_PRIORITY = {
+    '':                   0,
+    'Задержка':           1,
+    'Флуд (временно)':    2,
+    'Ошибка сети':        3,
+    'Username изменился': 4,
+    'Аккаунт кикнут':     5,
+    'Недоступен':         6,
+}
+
+def _mark_channel_unavailable(ss, username: str, status: str = 'Недоступен'):
+    """
+    Ставит статус в колонку D листа Каналы.
+    Перезаписывает только если новый статус приоритетнее текущего.
+    """
+    try:
+        ws   = ss.worksheet('Каналы')
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if not row:
+                continue
+            if _extract_username(row[0].strip()) == _extract_username(username):
+                existing = row[3].strip() if len(row) > 3 else ''
+                if _STATUS_PRIORITY.get(status, 0) > _STATUS_PRIORITY.get(existing, 0):
+                    ws.update(values=[[status]], range_name=f'D{i}')
+                    log.info(f'[каналы] Статус "{status}": {username}')
+                else:
+                    log.info(f'[каналы] Статус не обновлён (текущий "{existing}" важнее): {username}')
+                return
+        log.warning(f'[каналы] Канал не найден в листе для записи статуса: {username}')
+    except Exception as e:
+        log.error(f'Ошибка записи статуса канала: {e}', exc_info=True)
+
+
 def _mark_channel_delayed(ss, channel_names: set):
-    """Ставит статус 'Задержка' в колонку D листа Каналы для указанных каналов."""
+    """Ставит статус 'Задержка' только если текущий статус пустой."""
     if not channel_names:
         return
     try:
@@ -666,18 +700,17 @@ def _mark_channel_delayed(ss, channel_names: set):
         for i, row in enumerate(rows[1:], start=2):
             if not row:
                 continue
-            # Имя канала может быть в колонке A (username) или
-            # мы сверяем по chat_name из кеша — ищем по username → chat_name
             username = row[0].strip()
             name_in_cache = ''
             for uname, meta in state.get('username_to_meta', {}).items():
                 if _extract_username(username) == uname:
                     name_in_cache = meta.get('chat_name', '')
                     break
-            if name_in_cache in channel_names:
-                existing_status = row[3].strip() if len(row) > 3 else ''
-                if existing_status != 'Задержка':
-                    cells.append(gspread.Cell(i, 4, 'Задержка'))
+            if name_in_cache not in channel_names:
+                continue
+            existing = row[3].strip() if len(row) > 3 else ''
+            if _STATUS_PRIORITY.get(existing, 0) < _STATUS_PRIORITY['Задержка']:
+                cells.append(gspread.Cell(i, 4, 'Задержка'))
         if cells:
             ws.update_cells(cells, value_input_option='USER_ENTERED')
             log.info(f'[каналы] Статус Задержка проставлен: {len(cells)} каналов')
