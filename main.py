@@ -30,6 +30,7 @@ from sheets import _resolve_realtors
 from channels import _update_watched_chats
 from utils import _meta_by_abs_id, _build_link, _get_author_info, _text_to_html
 from utils import _find_minus_word, _calc_score
+from utils import _normalize_chat_id
 from bot_api import _tg_request
 from publisher import _process_and_publish
 from tasks import (
@@ -225,7 +226,7 @@ async def main():
                     return
 
                 raw_id = event.chat_id
-                abs_id = abs(raw_id)
+                abs_id = _normalize_chat_id(raw_id)
 
                 async with config._state_lock:
                     id_to_meta    = dict(state['id_to_meta'])
