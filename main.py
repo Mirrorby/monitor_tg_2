@@ -157,8 +157,14 @@ async def main():
     clients: dict[str, TelegramClient] = {}
 
     if SESSION_1 and API_ID_1 and API_HASH_1:
-        c1 = TelegramClient(StringSession(SESSION_1), API_ID_1, API_HASH_1)
+        c1 = TelegramClient(
+            StringSession(SESSION_1), API_ID_1, API_HASH_1,
+            connection_retries=10,
+            retry_delay=2,
+            auto_reconnect=True,
+        )
         await c1.start()
+        await c1.catch_up()
         clients['acc1'] = c1
         log.info('Аккаунт 1: подключён')
     else:
