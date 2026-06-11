@@ -275,6 +275,9 @@ async def main():
                 meta = _meta_by_abs_id(id_to_meta, abs_id)
                 if meta is None:
                     return
+
+                if meta.get('acc', 'acc1') != _acc:
+                    return
         
                 dedup_key = (raw_id, msg.id)
                 if dedup_key in seen_ids:
