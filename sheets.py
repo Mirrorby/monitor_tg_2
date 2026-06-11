@@ -240,8 +240,12 @@ def _read_channels(ss):
                 continue
             city  = str(row[1]).strip() if len(row) > 1 else ''
             theme = str(row[2]).strip() if len(row) > 2 else ''
-            result.append({'username': username, 'city': city, 'theme': theme})
+            acc   = str(row[4]).strip() if len(row) > 4 else 'acc1'
+            if acc not in ('acc1', 'acc2'):
+                acc = 'acc1'
+            result.append({'username': username, 'city': city, 'theme': theme, 'acc': acc})
         return result
+
     except Exception as e:
         log.error('Ошибка чтения каналов: ' + str(e), exc_info=True)
         return []
