@@ -259,6 +259,7 @@ async def main():
                 msg = event.message
                 raw_id = event.chat_id
                 abs_id = _normalize_chat_id(raw_id)
+                log.info(f'[{_acc}][raw event] chat_id={raw_id} abs={abs_id}')
 
                 if abs_id not in state['watched_ids']:
                     return
