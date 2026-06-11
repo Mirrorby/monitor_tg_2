@@ -43,7 +43,7 @@ async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
                 chat_name = getattr(entity, 'title', None) or username
                 return {'entity_id': eid, 'chat_name': chat_name, 'username': username}
             except FloodWaitError:
-                errors[acc_name] = f'FloodWait повторный'
+                errors[acc_name] = 'FloodWait повторный'
                 final_status = 'Флуд (временно)'
             except ChannelPrivateError:
                 errors[acc_name] = 'Канал приватный / аккаунт кикнут'
@@ -84,7 +84,8 @@ async def _resolve_entity(clients: dict, username: str, ss) -> dict | None:
     await _safe_sheets(_write_log, ss, 'ERROR', msg)
     await _safe_sheets_retry(_mark_channel_unavailable, ss, username, final_status)
     return None
-    
+
+
 async def _update_watched_chats(clients: dict, channels: list, ss):
     new_ids     = set()
     new_id_meta = {}
@@ -119,19 +120,30 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
         if uname and city:
             new_city_map[uname] = city
 
+    # Убираем из username_to_meta каналы которых больше нет в листе "Каналы"
+    # Это важно: _write_entity_cache пишет username_to_meta целиком,
+    # поэтому если не почистить — удалённые каналы вернутся в кэш при следующем запуске
+    active_usernames = {ch['username'] for ch in channels}
+    for uname in list(state['username_to_meta'].keys()):
+        if uname not in active_usernames:
+            log.info(f'Канал удалён из листа — убираю из кэша: {uname}')
+            state['username_to_meta'].pop(uname, None)
+
     async with config._state_lock:
         old_ids = state['watched_ids']
         added   = new_ids - old_ids
         removed = old_ids - new_ids
-    
-        state['watched_ids']      = new_ids       # полная замена
-        state['id_to_meta']       = new_id_meta   # полная замена
+
+        state['watched_ids']      = new_ids       # полная замена, не мёрж
+        state['id_to_meta']       = new_id_meta   # полная замена, не мёрж
         state['channel_city_map'] = new_city_map
-    
-    log.info(f'Каналов в watched_ids: {len(new_ids)}')
+
+    log.info(f'Каналов в watched_ids: {len(new_ids)} '
+             f'(~{len(new_ids) // 2} каналов × 2 ID-варианта)')
     if added:
         log.info(f'Добавлено ID-ключей: {len(added)}')
     if removed:
         log.info(f'Убрано ID-ключей: {len(removed)}')
 
+    # Пишем кэш только из актуального username_to_meta (удалённые уже вычищены выше)
     await _safe_sheets(_write_entity_cache, ss)
