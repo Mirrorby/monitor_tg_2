@@ -247,10 +247,7 @@ async def main():
 
     for acc_label, client in clients.items():
 
-        watched = list(state['watched_ids'])    # лок не нужен — читаем просто так
-        
         @client.on(events.NewMessage(
-            chats=watched,
             func=lambda e: (
                 not isinstance(e.message, (MessageService, MessageEmpty))
                 and not e.message.media
@@ -262,6 +259,9 @@ async def main():
                 msg = event.message
                 raw_id = event.chat_id
                 abs_id = _normalize_chat_id(raw_id)
+
+                if abs_id not in state['watched_ids']:
+                    return
         
                 # Читаем state без лока — словарь Python атомарен на чтение
                 id_to_meta    = state['id_to_meta']

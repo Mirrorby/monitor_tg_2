@@ -120,20 +120,18 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
             new_city_map[uname] = city
 
     async with config._state_lock:
-        # Мёржим со старыми данными — новые перезаписывают старые,
-        # но каналы у которых резолв упал остаются с прошлого раза
-        merged_ids  = state['watched_ids'] | new_ids
-        merged_meta = {**state['id_to_meta'], **new_id_meta}
-
-        added   = new_ids - state['watched_ids']
-        removed = state['watched_ids'] - new_ids  # информационно, реально не удаляем
-
-        state['watched_ids']      = merged_ids
-        state['id_to_meta']       = merged_meta
+        old_ids = state['watched_ids']
+        added   = new_ids - old_ids
+        removed = old_ids - new_ids
+    
+        state['watched_ids']      = new_ids       # полная замена
+        state['id_to_meta']       = new_id_meta   # полная замена
         state['channel_city_map'] = new_city_map
-
-    log.info(f'Каналов в watched_ids: {len(merged_ids)}')
-    if added:   log.info(f'Добавлено ID-ключей: {len(added)}')
-    if removed: log.info(f'Убрано ID-ключей (в Sheets, но резолв не прошёл или удалены): {len(removed)}')
+    
+    log.info(f'Каналов в watched_ids: {len(new_ids)}')
+    if added:
+        log.info(f'Добавлено ID-ключей: {len(added)}')
+    if removed:
+        log.info(f'Убрано ID-ключей: {len(removed)}')
 
     await _safe_sheets(_write_entity_cache, ss)
