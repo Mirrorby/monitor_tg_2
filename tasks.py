@@ -13,7 +13,7 @@ from sheets import (
     _safe_sheets, _safe_sheets_retry, _safe_sheets_result,
     _read_settings, _read_scoring_rules, _read_minus_words,
     _read_realtors_raw, _read_channels, _read_bot_subscribers,
-    _add_realtor_to_sheet,
+    _add_realtor_to_sheet, _load_ai_rejected_fingerprints, 
     _parse_excluded_accounts, _expire_crm_subscriptions,
     _add_crm_comment, _mark_channel_delayed, _mark_channel_unavailable,
 )
@@ -110,6 +110,13 @@ async def _settings_reload_loop(clients: dict, ss):
                                 ),
                             }
                         )
+
+            # Обновляем AI-rejected fingerprints
+            new_rejected_fps = await _safe_sheets_result(_load_ai_rejected_fingerprints, ss)
+            config.ai_rejected_fingerprints.clear()
+            for fp in new_rejected_fps:
+                config.ai_rejected_fingerprints.append(fp)
+            log.info(f'AI-rejected fingerprints обновлены: {len(new_rejected_fps)}')
 
             log.info(
                 f'Настройки применены | каналов: {len(state["watched_ids"])} | '

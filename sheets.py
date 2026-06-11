@@ -643,13 +643,23 @@ def _load_published_fingerprints(ss) -> set:
 
 def _load_ai_rejected_fingerprints(ss) -> set:
     try:
+        from datetime import date
+        today     = date.today()
+        yesterday = today - timedelta(days=1)
+        cutoff    = yesterday.strftime('%Y-%m-%d')
+
         data = ss.worksheet('Отклонено ИИ').get_all_values()
         result = set()
+        skipped = 0
         for row in data[1:]:
+            ts   = row[0].strip() if row else ''
             text = row[3].strip() if len(row) > 3 else ''
+            if ts[:10] < cutoff:
+                skipped += 1
+                continue
             if text:
                 result.add(_post_fingerprint(text, ''))
-        log.info(f'Загружено {len(result)} fingerprint-ов из «Отклонено ИИ»')
+        log.info(f'Загружено {len(result)} fingerprint-ов из «Отклонено ИИ» (пропущено: {skipped})')
         return result
     except Exception as e:
         log.error(f'Ошибка загрузки fingerprints (Отклонено ИИ): {e}', exc_info=True)
