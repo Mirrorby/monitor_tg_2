@@ -196,3 +196,13 @@ def _calc_score(text: str, rules: list) -> int:
                     total += rule['weight']
                     break
     return total
+
+def _build_link_from_meta(meta: dict, msg_id: int) -> str:
+    username = meta.get('username', '')
+    if username:
+        username = username.lstrip('@')
+        return f'https://t.me/{username}/{msg_id}'
+    chat_id = str(meta.get('chat_id', '')).lstrip('-')
+    if chat_id.startswith('100'):
+        chat_id = chat_id[3:]
+    return f'https://t.me/c/{chat_id}/{msg_id}'
