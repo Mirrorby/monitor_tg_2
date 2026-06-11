@@ -9,6 +9,7 @@ import time
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import MessageService, MessageEmpty
+from telethon import functions
 
 import config
 from config import (
@@ -28,7 +29,7 @@ from sheets import (
 )
 from sheets import _resolve_realtors
 from channels import _update_watched_chats
-from utils import _meta_by_abs_id, _build_link, _get_author_info, _text_to_html
+from utils import _meta_by_abs_id, _build_link, _build_link_from_meta, _get_author_info, _text_to_html
 from utils import _find_minus_word, _calc_score
 from utils import _normalize_chat_id
 from bot_api import _tg_request
@@ -78,6 +79,16 @@ async def _post_worker(worker_id: int, queue: asyncio.Queue, clients: dict, ss):
             log.error(f'[worker-{worker_id}] неожиданная ошибка: {e}', exc_info=True)
             await asyncio.sleep(1)
 
+async def _reset_update_state(client: TelegramClient):
+    try:
+        upd_state = await client(functions.updates.GetStateRequest())
+        # Прямой доступ к внутреннему кешу состояний Telethon
+        client._state_cache._pts = upd_state.pts
+        client._state_cache._date = upd_state.date  
+        client._state_cache._seq = upd_state.seq
+        log.info(f'pts сброшен: {upd_state.pts}')
+    except Exception as e:
+        log.warning(f'Не удалось сбросить pts: {e}')
 
 async def main():
     global _sheets_lock, _state_lock
@@ -162,9 +173,10 @@ async def main():
             connection_retries=10,
             retry_delay=2,
             auto_reconnect=True,
+            sequential_updates=False,
         )
         await c1.start()
-        await c1.catch_up()
+        await _reset_update_state(c1)
         clients['acc1'] = c1
         log.info('Аккаунт 1: подключён')
     else:
@@ -222,79 +234,75 @@ async def main():
 
     for acc_label, client in clients.items():
 
-        @client.on(events.NewMessage)
+        watched = list(state['watched_ids'])    # лок не нужен — читаем просто так
+        
+        @client.on(events.NewMessage(
+            chats=watched,
+            func=lambda e: (
+                not isinstance(e.message, (MessageService, MessageEmpty))
+                and not e.message.media
+                and not getattr(e.message, 'grouped_id', None)
+            )
+        ))
         async def _on_new_message(event, _acc=acc_label, _client=client):
             try:
                 msg = event.message
-                if isinstance(msg, (MessageService, MessageEmpty)):
-                    return
-                if getattr(msg, 'action', None) is not None:
-                    return
-
-                # ── Медиа и альбомы — пропускаем ──────────────────────────
-                if msg.media or getattr(msg, 'grouped_id', None):
-                    return
-
                 raw_id = event.chat_id
                 abs_id = _normalize_chat_id(raw_id)
-
-                async with config._state_lock:
-                    id_to_meta    = dict(state['id_to_meta'])
-                    minus_words   = list(state['minus_words'])
-                    scoring_rules = list(state['scoring_rules'])
-                    min_length    = state['min_length']
-                    mod_threshold = state['moderation_threshold']
-
+        
+                # Читаем state без лока — словарь Python атомарен на чтение
+                id_to_meta    = state['id_to_meta']
+                minus_words   = state['minus_words']
+                scoring_rules = state['scoring_rules']
+                min_length    = state['min_length']
+                mod_threshold = state['moderation_threshold']
+                excluded      = state.get('excluded_accounts', set())
+        
                 meta = _meta_by_abs_id(id_to_meta, abs_id)
                 if meta is None:
                     return
-                
+        
                 dedup_key = (raw_id, msg.id)
                 if dedup_key in seen_ids:
                     return
                 seen_ids.append(dedup_key)
-                
+        
                 chat_name = meta.get('chat_name', str(abs_id))
-                
+        
                 msg_age = time.time() - msg.date.timestamp()
                 log.info(f'[{_acc}][возраст] {chat_name} | {msg_age:.1f}с')
-
+        
                 if msg_age > 180:
                     log.warning(f'[{_acc}][задержка {msg_age:.0f}с] {chat_name}')
-                    async with config._state_lock:
-                        config.state['delayed_channels'].add(chat_name)
-
-                # ── Одиночное текстовое сообщение ─────────────────────────
+                    config.state['delayed_channels'].add(chat_name)  # без лока, set.add атомарен
+        
                 text = msg.text or getattr(msg, 'message', '') or ''
                 text = re.sub(r'[^\S\n]+', ' ', text).strip()
-                html_text = _text_to_html(text, msg.entities)
-
+        
                 minus_hit = _find_minus_word(text, minus_words)
                 if minus_hit:
                     log.info(f'[{_acc}][минус "{minus_hit}"] {chat_name} | {repr(text[:80])}')
                     return
-
+        
                 if len(text) < min_length:
                     log.info(f'[{_acc}][короткий {len(text)}<{min_length}] {chat_name}')
                     return
-
+        
                 score = _calc_score(text, scoring_rules)
                 if score < mod_threshold:
                     log.info(f'[{_acc}][скор:{score}<{mod_threshold}] {chat_name} | {repr(text[:60])}')
                     return
-
-                chat = await event.get_chat()
-                link = _build_link(chat, msg.id)
+        
+                html_text = _text_to_html(text, msg.entities)
+                link = _build_link_from_meta(meta, msg.id)
                 author_name, author_link, user_id = _get_author_info(msg)
 
-                async with config._state_lock:
-                    excluded = set(state.get('excluded_accounts', set()))
                 if user_id and user_id in excluded:
                     log.info(f'[{_acc}][исключён] user_id={user_id} {chat_name}')
                     return
-
+        
                 log.info(f'[{_acc}][принят скор:{score}] {chat_name} → {link}')
-
+        
                 post = {
                     'date':          msg.date.replace(tzinfo=None),
                     'chat_name':     chat_name,
@@ -313,13 +321,9 @@ async def main():
                     'channel_theme': meta.get('theme', ''),
                 }
                 metrics['processed'] += 1
-
                 post_queue.put_nowait({'post': post, 'msgs': [msg], 'acc': _acc})
-                log.info(
-                    f'[{_acc}][→queue скор:{score}] {chat_name} → {link} '
-                    f'| очередь: {post_queue.qsize()}'
-                )
-
+                log.info(f'[{_acc}][→queue скор:{score}] {chat_name} → {link} | очередь: {post_queue.qsize()}')
+        
             except Exception as e:
                 metrics['errors'] += 1
                 log.error(f'[{_acc}] Ошибка обработки сообщения: {e}', exc_info=True)
