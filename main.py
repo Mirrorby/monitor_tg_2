@@ -81,22 +81,26 @@ async def _post_worker(worker_id: int, queue: asyncio.Queue, clients: dict, ss):
 
 async def _reset_update_state(client: TelegramClient):
     try:
-        upd_state = await client(functions.updates.GetStateRequest())
+        # Говорим Telethon не гнаться за пропущенными обновлениями
+        client._no_updates = True
+        await asyncio.sleep(0.1)
         
-        # Находим реальный атрибут для хранения состояния
-        for attr in ['_state_cache', '_updates_cache', '_channel_pts', '__updates_state']:
-            if hasattr(client, attr):
-                log.info(f'pts cache атрибут найден: {attr}')
+        # Очищаем накопленную очередь обновлений
+        queue = client._updates_queue
+        cleared = 0
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+                cleared += 1
+            except asyncio.QueueEmpty:
                 break
-        else:
-            log.info(f'pts cache атрибут не найден — логируем все _* атрибуты:')
-            attrs = [a for a in dir(client) if 'state' in a.lower() or 'pts' in a.lower() or 'update' in a.lower()]
-            log.info(f'  {attrs}')
-            return
-            
-        log.info(f'GetState ответ: pts={upd_state.pts} seq={upd_state.seq}')
+        
+        # Возвращаем обработку новых обновлений
+        client._no_updates = False
+        
+        log.info(f'Очередь обновлений очищена: {cleared} элементов, _no_updates сброшен')
     except Exception as e:
-        log.warning(f'Не удалось сбросить pts: {e}')
+        log.warning(f'Не удалось сбросить состояние: {e}')
 
 async def main():
     global _sheets_lock, _state_lock
