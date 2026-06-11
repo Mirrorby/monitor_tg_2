@@ -96,6 +96,7 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
         if cached and 'entity_id' in cached:
             cached['city']  = ch.get('city', '')
             cached['theme'] = ch.get('theme', '')
+            cached['acc']   = ch.get('acc', 'acc1')
             eid = cached['entity_id']
             for vid in _all_id_variants(eid):
                 new_ids.add(vid)
@@ -106,6 +107,7 @@ async def _update_watched_chats(clients: dict, channels: list, ss):
         if meta:
             meta['city']  = ch.get('city', '')
             meta['theme'] = ch.get('theme', '')
+            meta['acc']   = ch.get('acc', 'acc1')
             eid = meta['entity_id']
             for vid in _all_id_variants(eid):
                 new_ids.add(vid)
