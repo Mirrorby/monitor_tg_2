@@ -177,6 +177,7 @@ async def main():
         )
         await c1.start()
         await _reset_update_state(c1)
+
         clients['acc1'] = c1
         log.info('Аккаунт 1: подключён')
     else:
