@@ -225,6 +225,10 @@ async def main():
                 if getattr(msg, 'action', None) is not None:
                     return
 
+                # ── Медиа и альбомы — пропускаем ──────────────────────────
+                if msg.media or getattr(msg, 'grouped_id', None):
+                    return
+
                 raw_id = event.chat_id
                 abs_id = _normalize_chat_id(raw_id)
 
@@ -253,10 +257,6 @@ async def main():
                     log.warning(f'[{_acc}][задержка {msg_age:.0f}с] {chat_name}')
                     async with config._state_lock:
                         config.state['delayed_channels'].add(chat_name)
-
-                # ── Медиа и альбомы — пропускаем ──────────────────────────
-                if msg.media or getattr(msg, 'grouped_id', None):
-                    return
 
                 # ── Одиночное текстовое сообщение ─────────────────────────
                 text = msg.text or getattr(msg, 'message', '') or ''
