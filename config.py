@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import os
+import sys
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
@@ -32,11 +33,21 @@ PROCESS_WORKERS = int(os.environ.get('PROCESS_WORKERS', '8'))
 QUEUE_ALERT_THRESHOLD = int(os.environ.get('QUEUE_ALERT_THRESHOLD', '100'))
 
 # ── Логирование ────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s',
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.addFilter(lambda r: r.levelno < logging.ERROR)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.ERROR)
+
+fmt = logging.Formatter(
+    '%(asctime)s | %(levelname)s | %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
 )
+stdout_handler.setFormatter(fmt)
+stderr_handler.setFormatter(fmt)
+
+logging.basicConfig(level=logging.INFO, handlers=[stdout_handler, stderr_handler])
 log = logging.getLogger(__name__)
 
 # ── Глобальное состояние ───────────────────────────────────────────────────────
