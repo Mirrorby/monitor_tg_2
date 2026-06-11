@@ -571,12 +571,47 @@ def _write_entity_cache(ss):
             ws = ss.worksheet('Кеш')
         except Exception:
             ws = ss.add_worksheet('Кеш', 1000, 3)
-        rows = [['username', 'entity_id', 'chat_name']]
+
+        # Читаем текущее состояние листа чтобы знать какие строки уже есть
+        existing = ws.get_all_values()
+        # Строим индекс username → номер строки
+        row_index = {}
+        for i, row in enumerate(existing[1:], start=2):
+            if row and row[0].strip():
+                row_index[row[0].strip()] = i
+
+        cells = []
+        next_row = len(existing) + 1
+
         for uname, meta in state['username_to_meta'].items():
-            rows.append([uname, str(meta.get('entity_id', '')), meta.get('chat_name', '')])
-        ws.clear()
-        ws.update(rows, value_input_option='USER_ENTERED')
-        log.info(f'Кеш записан: {len(rows) - 1} каналов')
+            eid = str(meta.get('entity_id', ''))
+            cname = meta.get('chat_name', '')
+            if uname in row_index:
+                # Обновляем существующую строку
+                r = row_index[uname]
+                cells.append(gspread.Cell(r, 1, uname))
+                cells.append(gspread.Cell(r, 2, eid))
+                cells.append(gspread.Cell(r, 3, cname))
+            else:
+                # Новая строка
+                cells.append(gspread.Cell(next_row, 1, uname))
+                cells.append(gspread.Cell(next_row, 2, eid))
+                cells.append(gspread.Cell(next_row, 3, cname))
+                next_row += 1
+
+        if cells:
+            ws.update_cells(cells, value_input_option='USER_ENTERED')
+
+        # Удаляем строки каналов которых больше нет (идём снизу вверх)
+        active = set(state['username_to_meta'].keys())
+        to_delete = []
+        for uname, row_num in row_index.items():
+            if uname not in active:
+                to_delete.append(row_num)
+        for row_num in sorted(to_delete, reverse=True):
+            ws.delete_rows(row_num)
+
+        log.info(f'Кеш записан: {len(state["username_to_meta"])} каналов')
     except Exception as e:
         log.error(f'Ошибка записи кеша: {e}', exc_info=True)
 
