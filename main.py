@@ -82,11 +82,19 @@ async def _post_worker(worker_id: int, queue: asyncio.Queue, clients: dict, ss):
 async def _reset_update_state(client: TelegramClient):
     try:
         upd_state = await client(functions.updates.GetStateRequest())
-        # Прямой доступ к внутреннему кешу состояний Telethon
-        client._state_cache._pts = upd_state.pts
-        client._state_cache._date = upd_state.date  
-        client._state_cache._seq = upd_state.seq
-        log.info(f'pts сброшен: {upd_state.pts}')
+        
+        # Находим реальный атрибут для хранения состояния
+        for attr in ['_state_cache', '_updates_cache', '_channel_pts', '__updates_state']:
+            if hasattr(client, attr):
+                log.info(f'pts cache атрибут найден: {attr}')
+                break
+        else:
+            log.info(f'pts cache атрибут не найден — логируем все _* атрибуты:')
+            attrs = [a for a in dir(client) if 'state' in a.lower() or 'pts' in a.lower() or 'update' in a.lower()]
+            log.info(f'  {attrs}')
+            return
+            
+        log.info(f'GetState ответ: pts={upd_state.pts} seq={upd_state.seq}')
     except Exception as e:
         log.warning(f'Не удалось сбросить pts: {e}')
 
